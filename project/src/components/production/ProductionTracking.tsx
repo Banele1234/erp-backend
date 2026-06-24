@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
+import { apiService } from '../../lib/api';
 import { ProductionTracking as Production, Product } from '../../types';
 import { Card, Button, Badge, Modal, Input, Select, LoadingSpinner, EmptyState, Table, TableHeader, TableBody, TableRow, TableCell } from '../common/StatusBadge';
 import { Plus, Search, Factory, Check, Clock, AlertTriangle, Play, Pause } from 'lucide-react';
@@ -17,14 +17,12 @@ export default function ProductionTrackingManagement() {
   const fetchProductions = async () => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('production_tracking')
-        .select('*, product:products(*)')
-        .order('created_at', { ascending: false });
-
-      if (!error && data) {
-        setProductions(data);
-      }
+      const response = await apiService.getProduction({
+        page: 1,
+        limit: 100,
+        status: filterStatus || undefined,
+      });
+      setProductions(response.data || []);
     } catch (error) {
       console.error('Error fetching productions:', error);
     }

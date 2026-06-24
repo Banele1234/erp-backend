@@ -1,5 +1,7 @@
+import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { apiService } from '../../lib/api';
 import {
   LayoutDashboard,
   Users,
@@ -14,6 +16,8 @@ import {
   Bell,
   Settings,
   UserCircle,
+  Users2,
+  BarChart3,
 } from 'lucide-react';
 
 const menuItems = [
@@ -29,11 +33,32 @@ const menuItems = [
   { path: '/production', icon: Factory, label: 'Production', roles: ['admin', 'management', 'production'] },
   { path: '/dispatches', icon: Truck, label: 'Dispatches', roles: ['admin', 'management', 'warehouse_staff'] },
   { path: '/notifications', icon: Bell, label: 'Notifications', roles: ['admin', 'management', 'warehouse_staff', 'production', 'customer'] },
+  { path: '/reports', icon: BarChart3, label: 'Reports', roles: ['admin', 'management'] },
+  { path: '/users', icon: Users2, label: 'Users', roles: ['admin'] },
 ];
 
 export default function Sidebar() {
   const location = useLocation();
   const { user } = useAuth();
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // Fetch unread notifications count
+  useEffect(() => {
+    if (!user) return;
+    const fetchUnread = async () => {
+      try {
+        const res = await apiService.getNotifications(true); // true = unread only
+        setUnreadCount(res.data?.length || 0);
+      } catch (e) {
+        console.error('Failed to fetch unread count:', e);
+      }
+    };
+    fetchUnread();
+
+    // Optional: refresh every 30 seconds
+    const interval = setInterval(fetchUnread, 30000);
+    return () => clearInterval(interval);
+  }, [user]);
 
   const filteredMenu = menuItems.filter(item => user && item.roles.includes(user.role));
 
@@ -59,6 +84,10 @@ export default function Sidebar() {
           {filteredMenu.map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.path;
+
+            // Special handling for Notifications – show badge
+            const isNotifications = item.path === '/notifications';
+
             return (
               <li key={item.path}>
                 <Link
@@ -69,7 +98,14 @@ export default function Sidebar() {
                       : 'text-slate-300 hover:bg-slate-800 hover:text-white'
                   }`}
                 >
-                  <Icon className="w-5 h-5" />
+                  <div className="relative">
+                    <Icon className="w-5 h-5" />
+                    {isNotifications && unreadCount > 0 && (
+                      <span className="absolute -top-1 -right-2 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                        {unreadCount > 9 ? '9+' : unreadCount}
+                      </span>
+                    )}
+                  </div>
                   <span className="font-medium">{item.label}</span>
                 </Link>
               </li>
@@ -79,13 +115,17 @@ export default function Sidebar() {
       </nav>
 
       <div className="p-4 border-t border-slate-700">
-        <Link
-          to="/settings"
-          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-all"
-        >
-          <Settings className="w-5 h-5" />
-          <span className="font-medium">Settings</span>
-        </Link>
+        {/* Settings – only visible to admins */}
+        {user?.role === 'admin' && (
+          <Link
+            to="/settings"
+            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-all"
+          >
+            <Settings className="w-5 h-5" />
+            <span className="font-medium">Settings</span>
+          </Link>
+        )}
+        {/* Profile – visible to everyone */}
         <Link
           to="/profile"
           className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-all"

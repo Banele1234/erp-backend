@@ -7,9 +7,10 @@ export const getInvoices = async (req: AuthenticatedRequest, res: Response, next
   try {
     const { page = 1, limit = 20, payment_status, customer_id } = req.query;
 
+    // 1. Build query for invoices (no nested joins)
     let query = supabase
       .from('invoices')
-      .select('*, customer:customers(*), order:orders(*)', { count: 'exact' });
+      .select('*', { count: 'exact' });
 
     if (req.user?.role === 'customer' && req.user?.customerId) {
       query = query.eq('customer_id', req.user.customerId);
@@ -26,15 +27,32 @@ export const getInvoices = async (req: AuthenticatedRequest, res: Response, next
 
     query = query.range(from, to).order('created_at', { ascending: false });
 
-    const { data, error, count } = await query;
+    const { data: invoices, error, count } = await query;
 
     if (error) {
       throw createError(error.message, 500);
     }
 
+    // 2. Fetch customer details separately
+    const customerIds = [...new Set(invoices?.map(inv => inv.customer_id).filter(Boolean))];
+    let customersMap: Record<string, any> = {};
+    if (customerIds.length) {
+      const { data: customers } = await supabase
+        .from('customers')
+        .select('id, company_name, customer_code, rating, phone, email')
+        .in('id', customerIds);
+      customersMap = (customers || []).reduce((acc, c) => ({ ...acc, [c.id]: c }), {});
+    }
+
+    // 3. Attach customer to each invoice
+    const invoicesWithCustomer = invoices?.map(inv => ({
+      ...inv,
+      customer: customersMap[inv.customer_id] || null,
+    })) || [];
+
     res.json({
       success: true,
-      data: data,
+      data: invoicesWithCustomer,
       pagination: {
         page: Number(page),
         limit: Number(limit),
@@ -51,17 +69,47 @@ export const getInvoiceById = async (req: AuthenticatedRequest, res: Response, n
   try {
     const { id } = req.params;
 
-    const { data, error } = await supabase
+    // 1. Fetch invoice
+    const { data: invoice, error } = await supabase
       .from('invoices')
-      .select('*, customer:customers(*), order:orders(*, items:order_items(*, product:products(*)))')
+      .select('*')
       .eq('id', id)
       .single();
 
-    if (error || !data) {
+    if (error || !invoice) {
       throw createError('Invoice not found', 404);
     }
 
-    res.json({ success: true, data });
+    // 2. Fetch customer
+    let customer = null;
+    if (invoice.customer_id) {
+      const { data: custData } = await supabase
+        .from('customers')
+        .select('*')
+        .eq('id', invoice.customer_id)
+        .single();
+      customer = custData;
+    }
+
+    // 3. Fetch order (optional)
+    let order = null;
+    if (invoice.order_id) {
+      const { data: orderData } = await supabase
+        .from('orders')
+        .select('*, items:order_items(*, product:products(*))')
+        .eq('id', invoice.order_id)
+        .single();
+      order = orderData;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        ...invoice,
+        customer,
+        order,
+      },
+    });
   } catch (error) {
     next(error);
   }

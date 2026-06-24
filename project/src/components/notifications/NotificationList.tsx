@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
+import { apiService } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { Notification } from '../../types';
 import { Card, Button, Badge, LoadingSpinner, EmptyState } from '../common/StatusBadge';
@@ -18,15 +18,8 @@ export default function NotificationList() {
     if (!user) return;
     setIsLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('notifications')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
-
-      if (!error && data) {
-        setNotifications(data);
-      }
+      const response = await apiService.getNotifications(false);
+      setNotifications(response.data || []);
     } catch (error) {
       console.error('Error fetching notifications:', error);
     }
@@ -34,28 +27,17 @@ export default function NotificationList() {
   };
 
   const markAsRead = async (id: string) => {
-    await supabase
-      .from('notifications')
-      .update({ is_read: true })
-      .eq('id', id);
+    await apiService.markNotificationRead(id);
     fetchNotifications();
   };
 
   const markAllAsRead = async () => {
-    if (!user) return;
-    await supabase
-      .from('notifications')
-      .update({ is_read: true })
-      .eq('user_id', user.id)
-      .eq('is_read', false);
+    await apiService.markAllNotificationsRead();
     fetchNotifications();
   };
 
   const deleteNotification = async (id: string) => {
-    await supabase
-      .from('notifications')
-      .delete()
-      .eq('id', id);
+    await apiService.deleteNotification(id);
     fetchNotifications();
   };
 

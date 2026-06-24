@@ -20,8 +20,7 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
       throw createError('Invalid credentials', 401);
     }
 
-    // In production, you would verify the password hash
-    // For now, we'll use Supabase Auth
+    // Use Supabase Auth to verify password
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -81,19 +80,28 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
   try {
     const { email, password, full_name, company_name, phone, customer_type, address, city, state, pincode, gst_number } = req.body;
 
-    // Create auth user in Supabase
-    const { data: authData, error: authError } = await supabase.auth.signUp({
+    // 1. Create user using Admin API (bypasses rate limits & email confirmation)
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
       email,
       password,
+      email_confirm: true, // Auto‑confirm – no email sent
+      user_metadata: { full_name, company_name },
     });
 
     if (authError) {
+      console.error('Admin createUser error:', authError);
       throw createError(authError.message, 400);
     }
 
-    // Create user record
+    // Ensure we have a user ID
+    if (!authData.user?.id) {
+      console.error('User ID missing after admin create:', authData);
+      throw createError('Failed to create user – missing user ID', 500);
+    }
+
+    // 2. Insert into public.users
     const { error: userError } = await supabase.from('users').insert({
-      id: authData.user?.id,
+      id: authData.user.id,
       email,
       full_name,
       password_hash: 'supabase_auth',
@@ -102,16 +110,17 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
     });
 
     if (userError) {
-      throw createError('Failed to create user', 500);
+      console.error('Supabase user insert error:', userError);
+      throw createError(`Failed to create user: ${userError.message}`, 500);
     }
 
-    // Create customer record
+    // 3. Create customer record
     const customerCode = `CUS-${Date.now().toString(36).toUpperCase()}`;
 
     const { data: customerData, error: customerError } = await supabase
       .from('customers')
       .insert({
-        user_id: authData.user?.id,
+        user_id: authData.user.id,
         customer_code: customerCode,
         company_name,
         contact_person: full_name,
@@ -130,13 +139,14 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
       .single();
 
     if (customerError) {
-      throw createError('Failed to create customer', 500);
+      console.error('Supabase customer insert error:', customerError);
+      throw createError(`Failed to create customer: ${customerError.message}`, 500);
     }
 
-    // Generate JWT
+    // 4. Generate JWT
     const token = jwt.sign(
       {
-        userId: authData.user?.id,
+        userId: authData.user.id,
         email,
         role: 'customer',
         customerId: customerData.id,
@@ -150,7 +160,7 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
       data: {
         token,
         user: {
-          id: authData.user?.id,
+          id: authData.user.id,
           email,
           full_name,
           role: 'customer',
@@ -159,6 +169,7 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
       },
     });
   } catch (error) {
+    console.error('Registration error:', error);
     next(error);
   }
 };
@@ -227,6 +238,94 @@ export const refreshToken = async (req: AuthenticatedRequest, res: Response, nex
       data: { token },
     });
   } catch (error) {
+    next(error);
+  }
+};
+
+// ============================================================
+// UPDATE PROFILE (new)
+// ============================================================
+export const updateProfile = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      throw createError('Unauthorized', 401);
+    }
+
+    const { full_name, company_name, phone, address, city, state, pincode, gst_number } = req.body;
+
+    // 1. Update user's full_name
+    const { error: userError } = await supabase
+      .from('users')
+      .update({ full_name, updated_at: new Date().toISOString() })
+      .eq('id', userId);
+
+    if (userError) {
+      console.error('Update user error:', userError);
+      throw createError('Failed to update user', 500);
+    }
+
+    // 2. Update customer record (if exists)
+    const { data: customer, error: customerFetchError } = await supabase
+      .from('customers')
+      .select('id')
+      .eq('user_id', userId)
+      .single();
+
+    if (customerFetchError && customerFetchError.code !== 'PGRST116') {
+      throw customerFetchError;
+    }
+
+    if (customer) {
+      const { error: customerUpdateError } = await supabase
+        .from('customers')
+        .update({
+          company_name,
+          contact_person: full_name, // keep in sync
+          phone,
+          address,
+          city,
+          state,
+          pincode,
+          gst_number,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', customer.id);
+
+      if (customerUpdateError) {
+        console.error('Update customer error:', customerUpdateError);
+        throw createError('Failed to update customer', 500);
+      }
+    }
+
+    // 3. Fetch updated user and customer
+    const { data: updatedUser, error: userFetchError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .single();
+
+    if (userFetchError) throw userFetchError;
+
+    let updatedCustomer = null;
+    if (updatedUser.role === 'customer') {
+      const { data: custData } = await supabase
+        .from('customers')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
+      updatedCustomer = custData;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        user: updatedUser,
+        customer: updatedCustomer,
+      },
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
     next(error);
   }
 };

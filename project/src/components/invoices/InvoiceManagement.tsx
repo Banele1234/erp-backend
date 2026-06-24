@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
+import { apiService } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { Invoice, Order, Customer } from '../../types';
 import { Card, Button, Badge, Modal, Input, Select, LoadingSpinner, EmptyState, Table, TableHeader, TableBody, TableRow, TableCell } from '../common/StatusBadge';
@@ -28,20 +28,13 @@ export default function InvoiceManagement() {
   const fetchInvoices = async () => {
     setIsLoading(true);
     try {
-      let query = supabase
-        .from('invoices')
-        .select('*, customer:customers(*), order:orders(*)')
-        .order('created_at', { ascending: false });
-
-      if (user?.role === 'customer' && customer) {
-        query = query.eq('customer_id', customer.id);
-      }
-
-      const { data, error } = await query;
-
-      if (!error && data) {
-        setInvoices(data);
-      }
+      const response = await apiService.getInvoices({
+        page: 1,
+        limit: 100,
+        payment_status: filterStatus || undefined,
+        customer_id: user?.role === 'customer' && customer ? customer.id : undefined,
+      });
+      setInvoices(response.data || []);
     } catch (error) {
       console.error('Error fetching invoices:', error);
     }
@@ -57,11 +50,9 @@ export default function InvoiceManagement() {
   });
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
+    return `E ${new Intl.NumberFormat('en-US', {
       maximumFractionDigits: 0,
-    }).format(amount);
+    }).format(amount)}`;
   };
 
   const totalOutstanding = invoices
@@ -245,11 +236,9 @@ function InvoiceDetailModal({
   if (!invoice) return null;
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
+    return `E ${new Intl.NumberFormat('en-US', {
       maximumFractionDigits: 0,
-    }).format(amount);
+    }).format(amount)}`;
   };
 
   return (

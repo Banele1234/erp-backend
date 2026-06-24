@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
+import { apiService } from '../../lib/api';
 import { MaterialRejection, Customer, Product, Order } from '../../types';
 import { Card, Button, Badge, Modal, Input, Select, LoadingSpinner, EmptyState, Table, TableHeader, TableBody, TableRow, TableCell } from '../common/StatusBadge';
 import { Plus, Search, AlertTriangle, Check, X, Clock } from 'lucide-react';
@@ -19,14 +19,12 @@ export default function RejectionManagement() {
   const fetchRejections = async () => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('material_rejections')
-        .select('*, customer:customers(*), product:products(*)')
-        .order('created_at', { ascending: false });
-
-      if (!error && data) {
-        setRejections(data);
-      }
+      const response = await apiService.getRejections({
+        page: 1,
+        limit: 100,
+        status: filterStatus || undefined,
+      });
+      setRejections(response.data || []);
     } catch (error) {
       console.error('Error fetching rejections:', error);
     }
@@ -42,11 +40,9 @@ export default function RejectionManagement() {
   });
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
+    return `E ${new Intl.NumberFormat('en-US', {
       maximumFractionDigits: 0,
-    }).format(amount);
+    }).format(amount)}`;
   };
 
   const pendingCount = rejections.filter(r => r.status === 'pending').length;
@@ -272,11 +268,9 @@ function ResolveRejectionModal({
   if (!rejection) return null;
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
+    return `E ${new Intl.NumberFormat('en-US', {
       maximumFractionDigits: 0,
-    }).format(amount);
+    }).format(amount)}`;
   };
 
   return (

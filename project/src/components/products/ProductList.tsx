@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
+import { apiService } from '../../lib/api';
 import { Product } from '../../types';
 import { Card, Button, Badge, Modal, Input, Select, LoadingSpinner, EmptyState, Table, TableHeader, TableBody, TableRow, TableCell } from '../common/StatusBadge';
 import { Plus, Search, Edit, Package, TrendingUp, TrendingDown, AlertTriangle, Filter } from 'lucide-react';
@@ -34,14 +34,13 @@ export default function ProductList() {
   const fetchProducts = async () => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('products')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (!error && data) {
-        setProducts(data);
-      }
+      const response = await apiService.getProducts({
+        page: 1,
+        limit: 100,
+        search: searchQuery || undefined,
+        category: filterCategory || undefined,
+      });
+      setProducts(response.data || []);
     } catch (error) {
       console.error('Error fetching products:', error);
     }
@@ -57,11 +56,9 @@ export default function ProductList() {
   });
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
+    return `E ${new Intl.NumberFormat('en-US', {
       maximumFractionDigits: 0,
-    }).format(amount);
+    }).format(amount)}`;
   };
 
   if (isLoading) {
@@ -252,6 +249,7 @@ export default function ProductList() {
   );
 }
 
+// ========== Add Product Modal (FIXED) ==========
 function AddProductModal({
   isOpen,
   onClose,
@@ -280,37 +278,29 @@ function AddProductModal({
     setIsSubmitting(true);
 
     try {
+      // ✅ Generate a unique product code
       const productCode = `PRD-${Date.now().toString(36).toUpperCase()}`;
 
-      const { error } = await supabase.from('products').insert({
+      const payload = {
+        ...formData,
         product_code: productCode,
-        name: formData.name,
-        description: formData.description,
-        category: formData.category,
-        unit: formData.unit,
-        unit_price: formData.unit_price,
-        cost_price: formData.cost_price,
-        gst_percentage: formData.gst_percentage,
-        reorder_level: formData.reorder_level,
-        eoq: formData.eoq,
-        weight_kg: formData.weight_kg,
-      });
+      };
 
-      if (!error) {
-        onSuccess();
-        setFormData({
-          name: '',
-          description: '',
-          category: 'regular',
-          unit: 'PCS',
-          unit_price: 0,
-          cost_price: 0,
-          gst_percentage: 18,
-          reorder_level: 100,
-          eoq: 500,
-          weight_kg: 0,
-        });
-      }
+      await apiService.createProduct(payload);
+      onSuccess();
+      // Reset form
+      setFormData({
+        name: '',
+        description: '',
+        category: 'regular',
+        unit: 'PCS',
+        unit_price: 0,
+        cost_price: 0,
+        gst_percentage: 18,
+        reorder_level: 100,
+        eoq: 500,
+        weight_kg: 0,
+      });
     } catch (error) {
       console.error('Error adding product:', error);
     }
@@ -412,6 +402,7 @@ function AddProductModal({
   );
 }
 
+// ========== Edit Product Modal ==========
 function EditProductModal({
   product,
   isOpen,
@@ -438,14 +429,8 @@ function EditProductModal({
     setIsSubmitting(true);
 
     try {
-      const { error } = await supabase
-        .from('products')
-        .update(formData)
-        .eq('id', product.id);
-
-      if (!error) {
-        onSuccess();
-      }
+      await apiService.updateProduct(product.id, formData);
+      onSuccess();
     } catch (error) {
       console.error('Error updating product:', error);
     }
@@ -536,7 +521,7 @@ function EditProductModal({
           <input
             type="checkbox"
             id="is_active"
-            checked={formData.is_active}
+            checked={formData.is_active ?? true}
             onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
             className="rounded border-slate-300"
           />

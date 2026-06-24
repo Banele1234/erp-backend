@@ -20,5 +20,6 @@ router.post('/register', [
 router.get('/me', authenticate, authController.getMe);
 router.post('/logout', authenticate, authController.logout);
 router.post('/refresh', authenticate, authController.refreshToken);
+router.put('/profile', authenticate, authController.updateProfile);  // <-- NEW
 
 export default router;

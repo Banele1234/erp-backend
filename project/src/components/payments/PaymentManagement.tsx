@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
+import { apiService } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { Payment, Invoice, Customer } from '../../types';
 import { Card, Button, Badge, Modal, Input, Select, LoadingSpinner, EmptyState, Table, TableHeader, TableBody, TableRow, TableCell } from '../common/StatusBadge';
@@ -19,20 +19,12 @@ export default function PaymentManagement() {
   const fetchPayments = async () => {
     setIsLoading(true);
     try {
-      let query = supabase
-        .from('payments')
-        .select('*, customer:customers(*), invoice:invoices(*)')
-        .order('created_at', { ascending: false });
-
-      if (user?.role === 'customer' && customer) {
-        query = query.eq('customer_id', customer.id);
-      }
-
-      const { data, error } = await query;
-
-      if (!error && data) {
-        setPayments(data);
-      }
+      const response = await apiService.getPayments({
+        page: 1,
+        limit: 100,
+        customer_id: user?.role === 'customer' && customer ? customer.id : undefined,
+      });
+      setPayments(response.data || []);
     } catch (error) {
       console.error('Error fetching payments:', error);
     }
@@ -47,11 +39,9 @@ export default function PaymentManagement() {
   });
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
+    return `E ${new Intl.NumberFormat('en-US', {
       maximumFractionDigits: 0,
-    }).format(amount);
+    }).format(amount)}`;
   };
 
   const totalReceived = payments.reduce((sum, p) => sum + p.amount, 0);
@@ -199,6 +189,7 @@ export default function PaymentManagement() {
   );
 }
 
+// ========== Add Payment Modal (FIXED) ==========
 function AddPaymentModal({
   isOpen,
   onClose,
@@ -210,6 +201,8 @@ function AddPaymentModal({
 }) {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [loadingCustomers, setLoadingCustomers] = useState(false);
+  const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [formData, setFormData] = useState({
     customer_id: '',
     invoice_id: '',
@@ -220,98 +213,162 @@ function AddPaymentModal({
     notes: '',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState('');
 
+  // Fetch customers and invoices when modal opens
   useEffect(() => {
     if (isOpen) {
-      fetchData();
+      fetchCustomersAndInvoices();
     }
   }, [isOpen]);
 
-  const fetchData = async () => {
-    const [custRes, invRes] = await Promise.all([
-      supabase.from('customers').select('*').eq('is_active', true),
-      supabase.from('invoices').select('*').in('payment_status', ['pending', 'partial']),
-    ]);
-    if (custRes.data) setCustomers(custRes.data);
-    if (invRes.data) setInvoices(invRes.data);
+  const fetchCustomersAndInvoices = async () => {
+    setLoadingCustomers(true);
+    setLoadingInvoices(true);
+    setError('');
+    try {
+      // Fetch customers
+      const custRes = await apiService.getCustomers({ page: 1, limit: 200 });
+      const activeCustomers = (custRes.data || []).filter((c: any) => c.is_active !== false);
+      setCustomers(activeCustomers);
+      console.log('✅ Customers loaded:', activeCustomers.length);
+
+      // Fetch invoices that are pending or partial
+      const invRes = await apiService.getInvoices({ page: 1, limit: 200 });
+      const pendingInvoices = (invRes.data || []).filter((i: any) =>
+        ['pending', 'partial'].includes(i.payment_status)
+      );
+      setInvoices(pendingInvoices);
+      console.log('✅ Invoices loaded:', pendingInvoices.length);
+    } catch (err: any) {
+      console.error('❌ Error loading data:', err);
+      setError(err.message || 'Failed to load customers or invoices.');
+    } finally {
+      setLoadingCustomers(false);
+      setLoadingInvoices(false);
+    }
   };
 
+  // Filter invoices for selected customer
   const filteredInvoices = formData.customer_id
     ? invoices.filter(i => i.customer_id === formData.customer_id)
     : [];
 
+  // When customer changes, reset invoice and amount
+  const handleCustomerChange = (customerId: string) => {
+    setFormData({
+      ...formData,
+      customer_id: customerId,
+      invoice_id: '',
+      amount: 0,
+    });
+  };
+
+  const handleInvoiceChange = (invoiceId: string) => {
+    const invoice = invoices.find(i => i.id === invoiceId);
+    setFormData({
+      ...formData,
+      invoice_id: invoiceId,
+      amount: invoice ? invoice.amount_due : formData.amount,
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
+    if (!formData.customer_id) {
+      setError('Please select a customer.');
+      return;
+    }
+    if (formData.amount <= 0) {
+      setError('Amount must be greater than zero.');
+      return;
+    }
     setIsSubmitting(true);
 
     try {
-      const paymentNumber = `PAY-${Date.now().toString(36).toUpperCase()}`;
-
-      const { data: paymentData, error: paymentError } = await supabase
-        .from('payments')
-        .insert({
-          payment_number: paymentNumber,
-          ...formData,
-        })
-        .select()
-        .single();
-
-      if (paymentError) throw paymentError;
-
-      if (formData.invoice_id && paymentData) {
-        const invoice = invoices.find(i => i.id === formData.invoice_id);
-        if (invoice) {
-          const newAmountPaid = invoice.amount_paid + formData.amount;
-          const newStatus = newAmountPaid >= invoice.total_amount ? 'paid' : 'partial';
-
-          await supabase
-            .from('invoices')
-            .update({
-              amount_paid: newAmountPaid,
-              payment_status: newStatus,
-            })
-            .eq('id', formData.invoice_id);
-        }
-      }
+      await apiService.createPayment({
+        invoice_id: formData.invoice_id || undefined,
+        customer_id: formData.customer_id,
+        amount: formData.amount,
+        payment_method: formData.payment_method,
+        reference_number: formData.reference_number,
+        bank_name: formData.bank_name,
+        notes: formData.notes,
+      });
 
       onSuccess();
-    } catch (error) {
-      console.error('Error recording payment:', error);
+      // Reset form
+      setFormData({
+        customer_id: '',
+        invoice_id: '',
+        amount: 0,
+        payment_method: 'bank_transfer',
+        reference_number: '',
+        bank_name: '',
+        notes: '',
+      });
+    } catch (err: any) {
+      console.error('Error recording payment:', err);
+      setError(err.message || 'Failed to record payment. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
-
-    setIsSubmitting(false);
   };
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Record Payment" size="md">
       <form onSubmit={handleSubmit} className="space-y-4">
-        <Select
-          label="Customer"
-          value={formData.customer_id}
-          onChange={(e) => setFormData({ ...formData, customer_id: e.target.value, invoice_id: '' })}
-          options={customers.map(c => ({ value: c.id, label: c.company_name }))}
-          placeholder="Select customer"
-          required
-        />
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+            {error}
+          </div>
+        )}
 
-        <Select
-          label="Apply to Invoice (optional)"
-          value={formData.invoice_id}
-          onChange={(e) => {
-            const invoice = invoices.find(i => i.id === e.target.value);
-            setFormData({
-              ...formData,
-              invoice_id: e.target.value,
-              amount: invoice ? invoice.amount_due : formData.amount,
-            });
-          }}
-          options={filteredInvoices.map(i => ({
-            value: i.id,
-            label: `${i.invoice_number} - Due: ${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(i.amount_due)}`
-          }))}
-          placeholder="Select invoice"
-        />
+        {/* Customer Select */}
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">
+            Customer <span className="text-red-500">*</span>
+          </label>
+          <select
+            value={formData.customer_id}
+            onChange={(e) => handleCustomerChange(e.target.value)}
+            className="w-full rounded-lg border border-slate-300 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            required
+            disabled={loadingCustomers}
+          >
+            <option value="">{loadingCustomers ? 'Loading customers...' : 'Select customer'}</option>
+            {customers.map((c) => (
+              <option key={c.id} value={c.id}>{c.company_name}</option>
+            ))}
+          </select>
+          {loadingCustomers && <span className="text-xs text-slate-400">Loading customers...</span>}
+        </div>
 
+        {/* Invoice Select */}
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">
+            Apply to Invoice (optional)
+          </label>
+          <select
+            value={formData.invoice_id}
+            onChange={(e) => handleInvoiceChange(e.target.value)}
+            className="w-full rounded-lg border border-slate-300 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            disabled={!formData.customer_id || loadingInvoices}
+          >
+            <option value="">{loadingInvoices ? 'Loading invoices...' : 'Select invoice (optional)'}</option>
+            {filteredInvoices.map((i) => (
+              <option key={i.id} value={i.id}>
+                {i.invoice_number} - Due: {formatCurrency(i.amount_due)}
+              </option>
+            ))}
+          </select>
+          {formData.customer_id && filteredInvoices.length === 0 && !loadingInvoices && (
+            <p className="text-xs text-amber-600 mt-1">No pending invoices for this customer.</p>
+          )}
+        </div>
+
+        {/* Amount */}
         <Input
           label="Amount"
           type="number"
@@ -321,6 +378,7 @@ function AddPaymentModal({
           required
         />
 
+        {/* Payment Method */}
         <Select
           label="Payment Method"
           value={formData.payment_method}
@@ -363,4 +421,11 @@ function AddPaymentModal({
       </form>
     </Modal>
   );
+}
+
+// Helper function to format currency inside the modal
+function formatCurrency(amount: number) {
+  return `E ${new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: 0,
+  }).format(amount)}`;
 }

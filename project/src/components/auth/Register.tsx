@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { supabase } from '../../lib/supabase';
+import { apiService } from '../../lib/api';
 import { Button, Input, Select } from '../common/StatusBadge';
 import { Factory, User, Building, Phone, Mail, Lock, MapPin } from 'lucide-react';
 
@@ -15,6 +15,8 @@ export default function Register() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [step, setStep] = useState(1);
+  const [showConfirmation, setShowConfirmation] = useState(false);
+  const [confirmEmail, setConfirmEmail] = useState('');
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -38,6 +40,7 @@ export default function Register() {
     e.preventDefault();
     setError('');
 
+    // Step 1 validation
     if (step === 1) {
       if (formData.password !== formData.confirmPassword) {
         setError('Passwords do not match');
@@ -51,58 +54,74 @@ export default function Register() {
       return;
     }
 
+    // Step 2: submit to backend
     setIsLoading(true);
 
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
+      const response = await apiService.register({
         email: formData.email,
         password: formData.password,
+        full_name: formData.full_name,
+        company_name: formData.company_name,
+        customer_type: formData.customer_type,
+        phone: formData.phone,
+        address: formData.address,
+        city: formData.city,
+        state: formData.state,
+        pincode: formData.pincode,
+        gst_number: formData.gst_number,
       });
 
-      if (authError) throw authError;
+      // Check if email confirmation is required
+      if (response.requiresConfirmation) {
+        setConfirmEmail(response.email || formData.email);
+        setShowConfirmation(true);
+        setError('');
+        return;
+      }
 
-      if (authData.user) {
-        const customerCode = `CUS-${Date.now().toString(36).toUpperCase()}`;
-
-        const { error: userError } = await supabase.from('users').insert({
-          id: authData.user.id,
-          email: formData.email,
-          full_name: formData.full_name,
-          password_hash: 'supabase_auth',
-          role: 'customer',
-          is_active: true,
-        });
-
-        if (userError) throw userError;
-
-        const { error: customerError } = await supabase.from('customers').insert({
-          user_id: authData.user.id,
-          customer_code: customerCode,
-          company_name: formData.company_name,
-          contact_person: formData.full_name,
-          phone: formData.phone,
-          address: formData.address,
-          city: formData.city,
-          state: formData.state,
-          pincode: formData.pincode,
-          gst_number: formData.gst_number,
-          customer_type: formData.customer_type,
-          rating: 'bronze',
-          credit_limit: 100000,
-          country: 'India',
-        });
-
-        if (customerError) throw customerError;
-
+      // If token is returned, user is confirmed
+      if (response.data?.token) {
+        apiService.setToken(response.data.token);
         navigate('/');
+      } else {
+        setError('Registration failed – no token returned');
       }
     } catch (err: any) {
-      setError(err.message || 'Registration failed. Please try again.');
+      const message = err?.response?.data?.error || err?.message || 'Registration failed. Please try again.';
+      setError(message);
     }
 
     setIsLoading(false);
   };
 
+  // Show confirmation screen if needed
+  if (showConfirmation) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center p-4">
+        <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl p-8 text-center">
+          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Mail className="w-8 h-8 text-green-600" />
+          </div>
+          <h2 className="text-2xl font-bold text-slate-900 mb-2">Check your email</h2>
+          <p className="text-slate-600 mb-4">
+            We sent a confirmation link to <strong>{confirmEmail}</strong>.
+          </p>
+          <p className="text-sm text-slate-500 mb-6">
+            Please click the link in the email to activate your account, then you can log in.
+          </p>
+          <Link
+            to="/login"
+            className="inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Go to Login
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // Normal registration form
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center p-4">
       <div className="w-full max-w-lg">

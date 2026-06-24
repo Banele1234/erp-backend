@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
+import { apiService } from '../../lib/api';
 import { Customer } from '../../types';
 import { Card, Button, Badge, Modal, Input, Select, LoadingSpinner, EmptyState } from '../common/StatusBadge';
 import {
@@ -14,6 +14,9 @@ import {
   CreditCard,
   Star,
   Filter,
+  CheckCircle,
+  AlertCircle,
+  Trash2, // <-- import delete icon
 } from 'lucide-react';
 
 const customerTypeLabels: Record<string, string> = {
@@ -50,14 +53,13 @@ export default function CustomerList() {
   const fetchCustomers = async () => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('customers')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (!error && data) {
-        setCustomers(data);
-      }
+      const response = await apiService.getCustomers({
+        page: 1,
+        limit: 100,
+        search: searchQuery || undefined,
+        type: filterType || undefined,
+      });
+      setCustomers(response.data || []);
     } catch (error) {
       console.error('Error fetching customers:', error);
     }
@@ -74,11 +76,9 @@ export default function CustomerList() {
   });
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
+    return `E ${new Intl.NumberFormat('en-US', {
       maximumFractionDigits: 0,
-    }).format(amount);
+    }).format(amount)}`;
   };
 
   const getUtilizationPercent = (customer: Customer) => {
@@ -166,8 +166,8 @@ export default function CustomerList() {
                     <span>{customer.phone || 'N/A'}</span>
                   </div>
                   <div className="flex items-center gap-2 text-slate-600">
-                    <MapPin className="w-4 h-4" />
-                    <span>{customer.city}, {customer.state}</span>
+                    <Mail className="w-4 h-4" />
+                    <span>{customer.email || 'N/A'}</span>
                   </div>
                   <div className="flex items-center gap-2 text-slate-600">
                     <Star className="w-4 h-4" />
@@ -219,6 +219,7 @@ export default function CustomerList() {
   );
 }
 
+// ========== Customer Details Modal (with Delete) ==========
 function CustomerDetailsModal({
   customer,
   isOpen,
@@ -232,6 +233,7 @@ function CustomerDetailsModal({
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<Partial<Customer>>({});
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     if (customer) {
@@ -242,23 +244,39 @@ function CustomerDetailsModal({
   const handleSave = async () => {
     if (!customer) return;
 
-    const { error } = await supabase
-      .from('customers')
-      .update(formData)
-      .eq('id', customer.id);
-
-    if (!error) {
+    try {
+      await apiService.updateCustomer(customer.id, formData);
       onUpdate();
       setIsEditing(false);
+    } catch (error) {
+      console.error('Error updating customer:', error);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!customer) return;
+    // Confirm deletion
+    if (!window.confirm(`Are you sure you want to delete customer "${customer.company_name}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      await apiService.deleteCustomer(customer.id);
+      onUpdate(); // refresh the list
+      onClose(); // close the modal
+    } catch (error) {
+      console.error('Error deleting customer:', error);
+      alert('Failed to delete customer. Please try again.');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
+    return `E ${new Intl.NumberFormat('en-US', {
       maximumFractionDigits: 0,
-    }).format(amount);
+    }).format(amount)}`;
   };
 
   if (!customer) return null;
@@ -293,10 +311,21 @@ function CustomerDetailsModal({
                 </Button>
               </>
             ) : (
-              <Button variant="outline" onClick={() => setIsEditing(true)}>
-                <Edit className="w-4 h-4 mr-2" />
-                Edit
-              </Button>
+              <>
+                <Button variant="outline" onClick={() => setIsEditing(true)}>
+                  <Edit className="w-4 h-4 mr-2" />
+                  Edit
+                </Button>
+                <Button
+                  variant="outline"
+                  className="text-red-600 border-red-200 hover:bg-red-50"
+                  onClick={handleDelete}
+                  disabled={isDeleting}
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  {isDeleting ? 'Deleting...' : 'Delete'}
+                </Button>
+              </>
             )}
           </div>
         </div>
@@ -328,31 +357,33 @@ function CustomerDetailsModal({
               </div>
               <div className="flex items-center gap-2">
                 <Mail className="w-4 h-4 text-slate-400" />
-                <span className="text-slate-600">{customer.contact_person}</span>
+                <span className="text-slate-600">{customer.email || 'N/A'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <MapPin className="w-4 h-4 text-slate-400" />
+                <span className="text-slate-600">{customer.address || 'N/A'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-slate-600">{customer.city || ''}</span>
               </div>
             </div>
           </div>
           <div className="space-y-3">
-            <h4 className="font-medium text-slate-700">Address</h4>
-            <p className="text-sm text-slate-600">
-              {customer.address}<br />
-              {customer.city}, {customer.state} - {customer.pincode}
-            </p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-4 pt-4 border-t border-slate-200">
-          <div>
-            <p className="text-sm text-slate-500">Credit Limit</p>
-            <p className="text-lg font-semibold text-slate-900">{formatCurrency(customer.credit_limit)}</p>
-          </div>
-          <div>
-            <p className="text-sm text-slate-500">Outstanding</p>
-            <p className="text-lg font-semibold text-red-600">{formatCurrency(customer.current_outstanding)}</p>
-          </div>
-          <div>
-            <p className="text-sm text-slate-500">Total Purchases</p>
-            <p className="text-lg font-semibold text-emerald-600">{formatCurrency(customer.total_purchases)}</p>
+            <h4 className="font-medium text-slate-700">Financials</h4>
+            <div className="space-y-2 text-sm">
+              <div>
+                <p className="text-slate-500">Credit Limit</p>
+                <p className="font-medium text-slate-900">{formatCurrency(customer.credit_limit)}</p>
+              </div>
+              <div>
+                <p className="text-slate-500">Outstanding</p>
+                <p className="font-medium text-red-600">{formatCurrency(customer.current_outstanding)}</p>
+              </div>
+              <div>
+                <p className="text-slate-500">Total Purchases</p>
+                <p className="font-medium text-emerald-600">{formatCurrency(customer.total_purchases)}</p>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -360,6 +391,7 @@ function CustomerDetailsModal({
   );
 }
 
+// ========== Add Customer Modal (unchanged) ==========
 function AddCustomerModal({
   isOpen,
   onClose,
@@ -370,60 +402,54 @@ function AddCustomerModal({
   onSuccess: () => void;
 }) {
   const [formData, setFormData] = useState({
+    email: '',
     company_name: '',
     contact_person: '',
     phone: '',
-    email: '',
     address: '',
     city: '',
-    state: '',
-    pincode: '',
-    gst_number: '',
     customer_type: 'regular_dealer' as const,
     credit_limit: 100000,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+    setErrorMessage('');
+    setSuccessMessage('');
 
     try {
-      const customerCode = `CUS-${Date.now().toString(36).toUpperCase()}`;
-
-      const { error } = await supabase.from('customers').insert({
-        customer_code: customerCode,
+      const response = await apiService.createCustomer({
+        email: formData.email,
         company_name: formData.company_name,
         contact_person: formData.contact_person,
         phone: formData.phone,
         address: formData.address,
         city: formData.city,
-        state: formData.state,
-        pincode: formData.pincode,
-        gst_number: formData.gst_number,
         customer_type: formData.customer_type,
         credit_limit: formData.credit_limit,
-        rating: 'bronze',
-        country: 'India',
       });
 
-      if (!error) {
+      setSuccessMessage('Customer created successfully! An invite email has been sent.');
+      setTimeout(() => {
         onSuccess();
         setFormData({
+          email: '',
           company_name: '',
           contact_person: '',
           phone: '',
-          email: '',
           address: '',
           city: '',
-          state: '',
-          pincode: '',
-          gst_number: '',
           customer_type: 'regular_dealer',
           credit_limit: 100000,
         });
-      }
-    } catch (error) {
+      }, 1500);
+    } catch (error: any) {
+      const message = error?.response?.data?.error || error?.message || 'Failed to create customer. Please try again.';
+      setErrorMessage(message);
       console.error('Error adding customer:', error);
     }
 
@@ -433,6 +459,19 @@ function AddCustomerModal({
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Add New Customer" size="lg">
       <form onSubmit={handleSubmit} className="space-y-4">
+        {errorMessage && (
+          <div className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700 border border-red-200">
+            <AlertCircle className="w-4 h-4" />
+            {errorMessage}
+          </div>
+        )}
+        {successMessage && (
+          <div className="flex items-center gap-2 rounded-lg bg-green-50 p-3 text-sm text-green-700 border border-green-200">
+            <CheckCircle className="w-4 h-4" />
+            {successMessage}
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-4">
           <Input
             label="Company Name"
@@ -450,11 +489,22 @@ function AddCustomerModal({
 
         <div className="grid grid-cols-2 gap-4">
           <Input
+            label="Email"
+            type="email"
+            value={formData.email}
+            onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+            required
+            helper="An invite email will be sent to this address"
+          />
+          <Input
             label="Phone"
             value={formData.phone}
             onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
             required
           />
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
           <Select
             label="Customer Type"
             value={formData.customer_type}
@@ -465,40 +515,6 @@ function AddCustomerModal({
               { value: 'exclusive_dealer', label: 'Exclusive Dealer' },
             ]}
           />
-        </div>
-
-        <Input
-          label="Address"
-          value={formData.address}
-          onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-        />
-
-        <div className="grid grid-cols-3 gap-4">
-          <Input
-            label="City"
-            value={formData.city}
-            onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-            required
-          />
-          <Input
-            label="State"
-            value={formData.state}
-            onChange={(e) => setFormData({ ...formData, state: e.target.value })}
-            required
-          />
-          <Input
-            label="Pincode"
-            value={formData.pincode}
-            onChange={(e) => setFormData({ ...formData, pincode: e.target.value })}
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <Input
-            label="GST Number"
-            value={formData.gst_number}
-            onChange={(e) => setFormData({ ...formData, gst_number: e.target.value })}
-          />
           <Input
             label="Credit Limit"
             type="number"
@@ -507,6 +523,18 @@ function AddCustomerModal({
             required
           />
         </div>
+
+        <Input
+          label="Address"
+          value={formData.address}
+          onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+        />
+
+        <Input
+          label="City"
+          value={formData.city}
+          onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+        />
 
         <div className="flex justify-end gap-3 pt-4">
           <Button variant="outline" onClick={onClose} type="button">

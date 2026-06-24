@@ -94,7 +94,7 @@ class ApiService {
       body: data,
       requiresAuth: false,
     });
-    if (response.data.token) {
+    if (response.data && response.data.token) {
       this.setToken(response.data.token);
     }
     return response;
@@ -322,6 +322,52 @@ class ApiService {
 
   async getSalesChartData() {
     return this.request<any[]>('/dashboard/sales-chart');
+  }
+
+  async getUsers() {
+    return this.request<any[]>('/users');
+  }
+
+  async createInternalUser(data: { full_name: string; email: string; password: string; role: string }) {
+    return this.request<any>('/users', {
+      method: 'POST',
+      body: data,
+    });
+  }
+
+  // ============================================================
+  // Settings API
+  // ============================================================
+  async getSettings() {
+    return this.request<any>('/settings', { method: 'GET', requiresAuth: true });
+  }
+
+  async updateSettings(data: any) {
+    return this.request<any>('/settings', {
+      method: 'PUT',
+      body: data,
+      requiresAuth: true,
+    });
+  }
+
+  // ============================================================
+  // Profile API (new)
+  // ============================================================
+  async updateProfile(data: {
+    full_name: string;
+    company_name?: string;
+    phone?: string;
+    address?: string;
+    city?: string;
+    state?: string;
+    pincode?: string;
+    gst_number?: string;
+  }) {
+    return this.request<{ user: any; customer: any }>('/auth/profile', {
+      method: 'PUT',
+      body: data,
+      requiresAuth: true,
+    });
   }
 }
 

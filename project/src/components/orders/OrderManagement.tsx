@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
+import { useState, useEffect, useRef } from 'react';
+import { apiService } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { Order, OrderItem, Customer, Product, Warehouse } from '../../types';
 import { Card, Button, Badge, Modal, Input, Select, LoadingSpinner, EmptyState, Table, TableHeader, TableBody, TableRow, TableCell } from '../common/StatusBadge';
@@ -67,20 +67,13 @@ export default function OrderManagement() {
   const fetchOrders = async () => {
     setIsLoading(true);
     try {
-      let query = supabase
-        .from('orders')
-        .select('*, customer:customers(*), warehouse:warehouses(*), items:order_items(*, product:products(*))')
-        .order('created_at', { ascending: false });
-
-      if (user?.role === 'customer' && customer) {
-        query = query.eq('customer_id', customer.id);
-      }
-
-      const { data, error } = await query;
-
-      if (!error && data) {
-        setOrders(data);
-      }
+      const response = await apiService.getOrders({
+        page: 1,
+        limit: 100,
+        status: filterStatus || undefined,
+        customer_id: user?.role === 'customer' && customer ? customer.id : undefined,
+      });
+      setOrders(response.data || []);
     } catch (error) {
       console.error('Error fetching orders:', error);
     }
@@ -96,15 +89,13 @@ export default function OrderManagement() {
   });
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
+    return `E ${new Intl.NumberFormat('en-US', {
       maximumFractionDigits: 0,
-    }).format(amount);
+    }).format(amount)}`;
   };
 
   const formatDate = (date: string) => {
-    return new Date(date).toLocaleDateString('en-IN', {
+    return new Date(date).toLocaleDateString('en-US', {
       day: '2-digit',
       month: 'short',
       year: 'numeric',
@@ -126,6 +117,7 @@ export default function OrderManagement() {
           <h1 className="text-2xl font-bold text-slate-900">Orders</h1>
           <p className="text-slate-500 mt-1">Manage customer orders</p>
         </div>
+        {/* ✅ Show "New Order" button for EVERYONE (customers, admins, etc.) */}
         <Button onClick={() => setShowAddModal(true)}>
           <Plus className="w-4 h-4 mr-2" />
           New Order
@@ -268,6 +260,7 @@ export default function OrderManagement() {
   );
 }
 
+// ========== Create Order Modal ==========
 function CreateOrderModal({
   isOpen,
   onClose,
@@ -277,10 +270,20 @@ function CreateOrderModal({
   onClose: () => void;
   onSuccess: () => void;
 }) {
-  const { customer } = useAuth();
-  const [products, setProducts] = useState<Product[]>([]);
-  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const { user, customer } = useAuth();
+  const isCustomer = user?.role === 'customer';
+
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [loadingCustomers, setLoadingCustomers] = useState(false);
+
+  const [productSearch, setProductSearch] = useState('');
+  const [productOptions, setProductOptions] = useState<Product[]>([]);
+  const [isProductLoading, setIsProductLoading] = useState(false);
+  const [showProductDropdown, setShowProductDropdown] = useState(false);
+  const productSearchRef = useRef<HTMLDivElement>(null);
+  const productInputRef = useRef<HTMLInputElement>(null);
+
   const [items, setItems] = useState<{ product_id: string; quantity: number }[]>([]);
   const [formData, setFormData] = useState({
     customer_id: '',
@@ -289,121 +292,194 @@ function CreateOrderModal({
     required_date: '',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (isOpen) {
-      fetchData();
+      fetchInitialData();
     }
   }, [isOpen]);
 
-  const fetchData = async () => {
-    const [prodRes, whRes, custRes] = await Promise.all([
-      supabase.from('products').select('*').eq('is_active', true),
-      supabase.from('warehouses').select('*').eq('is_active', true),
-      supabase.from('customers').select('*').eq('is_active', true),
-    ]);
-    if (prodRes.data) setProducts(prodRes.data);
-    if (whRes.data) setWarehouses(whRes.data);
-    if (custRes.data) {
-      setCustomers(custRes.data);
-      if (customer) {
+  const fetchInitialData = async () => {
+    setError('');
+    try {
+      const whRes = await apiService.getWarehouses();
+      setWarehouses((whRes.data || []).filter((w: any) => w.is_active !== false));
+
+      if (!isCustomer) {
+        setLoadingCustomers(true);
+        const custRes = await apiService.getCustomers({ page: 1, limit: 200 });
+        setCustomers(custRes.data || []);
+        setLoadingCustomers(false);
+      }
+
+      if (isCustomer && customer) {
         setFormData(prev => ({ ...prev, customer_id: customer.id }));
       }
+    } catch (err: any) {
+      console.error('❌ Error loading data:', err);
+      setError(err.message || 'Failed to load data. Please refresh.');
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-
-    try {
-      const orderNumber = `ORD-${Date.now().toString(36).toUpperCase()}`;
-      let subtotal = 0;
-      let taxAmount = 0;
-
-      const orderItems = items.map(item => {
-        const product = products.find(p => p.id === item.product_id);
-        const lineTotal = (product?.unit_price || 0) * item.quantity;
-        const tax = lineTotal * ((product?.gst_percentage || 18) / 100);
-        subtotal += lineTotal;
-        taxAmount += tax;
-        return {
-          product_id: item.product_id,
-          quantity: item.quantity,
-          unit_price: product?.unit_price || 0,
-          tax_percentage: product?.gst_percentage || 18,
-          line_total: lineTotal,
-        };
-      });
-
-      const { data: orderData, error: orderError } = await supabase
-        .from('orders')
-        .insert({
-          order_number: orderNumber,
-          customer_id: formData.customer_id,
-          warehouse_id: formData.warehouse_id,
-          required_date: formData.required_date || null,
-          notes: formData.notes,
-          subtotal,
-          tax_amount: taxAmount,
-          total_amount: subtotal + taxAmount,
-          status: 'pending',
-        })
-        .select()
-        .single();
-
-      if (orderError) throw orderError;
-
-      if (orderData && orderItems.length > 0) {
-        const { error: itemsError } = await supabase
-          .from('order_items')
-          .insert(orderItems.map(item => ({ ...item, order_id: orderData.id })));
-
-        if (itemsError) throw itemsError;
+  useEffect(() => {
+    if (!productSearch.trim()) {
+      setProductOptions([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setIsProductLoading(true);
+      try {
+        const res = await apiService.getProducts({ search: productSearch, limit: 50 });
+        setProductOptions(res.data || []);
+      } catch (err) {
+        console.error('Product search error:', err);
+        setProductOptions([]);
+      } finally {
+        setIsProductLoading(false);
       }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [productSearch]);
 
-      onSuccess();
-      setItems([]);
-      setFormData({ customer_id: '', warehouse_id: '', notes: '', required_date: '' });
-    } catch (error) {
-      console.error('Error creating order:', error);
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (productSearchRef.current && !productSearchRef.current.contains(e.target as Node)) {
+        setShowProductDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleSelectProduct = (product: Product) => {
+    const existing = items.find(i => i.product_id === product.id);
+    if (existing) {
+      setError('Product already added.');
+      return;
     }
-
-    setIsSubmitting(false);
-  };
-
-  const addItem = () => {
-    setItems([...items, { product_id: '', quantity: 1 }]);
+    setItems([...items, { product_id: product.id, quantity: 1 }]);
+    setProductSearch('');
+    setProductOptions([]);
+    setShowProductDropdown(false);
+    productInputRef.current?.focus();
   };
 
   const removeItem = (index: number) => {
     setItems(items.filter((_, i) => i !== index));
   };
 
-  const updateItem = (index: number, field: string, value: any) => {
+  const updateItemQuantity = (index: number, quantity: number) => {
     const newItems = [...items];
-    newItems[index] = { ...newItems[index], [field]: value };
+    newItems[index].quantity = Math.max(1, quantity);
     setItems(newItems);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (!formData.customer_id) {
+      setError('Please select a customer.');
+      return;
+    }
+    if (!formData.warehouse_id) {
+      setError('Please select a warehouse.');
+      return;
+    }
+    if (items.length === 0) {
+      setError('Please add at least one product.');
+      return;
+    }
+    setIsSubmitting(true);
+
+    try {
+      const orderItems = items.map(item => ({
+        product_id: item.product_id,
+        quantity: item.quantity,
+      }));
+
+      await apiService.createOrder({
+        customer_id: formData.customer_id,
+        warehouse_id: formData.warehouse_id,
+        required_date: formData.required_date || undefined,
+        notes: formData.notes,
+        items: orderItems,
+      });
+
+      onSuccess();
+      setItems([]);
+      setFormData({ customer_id: '', warehouse_id: '', notes: '', required_date: '' });
+    } catch (error: any) {
+      console.error('Error creating order:', error);
+      setError(error.message || 'Failed to create order. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const addItem = () => {
+    setProductSearch('');
+    setShowProductDropdown(true);
+    setTimeout(() => productInputRef.current?.focus(), 100);
   };
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Create New Order" size="xl">
       <form onSubmit={handleSubmit} className="space-y-4">
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+            {error}
+          </div>
+        )}
+
         <div className="grid grid-cols-3 gap-4">
-          <Select
-            label="Customer"
-            value={formData.customer_id}
-            onChange={(e) => setFormData({ ...formData, customer_id: e.target.value })}
-            options={customers.map(c => ({ value: c.id, label: c.company_name }))}
-            required
-          />
-          <Select
-            label="Warehouse"
-            value={formData.warehouse_id}
-            onChange={(e) => setFormData({ ...formData, warehouse_id: e.target.value })}
-            options={warehouses.map(w => ({ value: w.id, label: w.name }))}
-            required
-          />
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Customer <span className="text-red-500">*</span>
+            </label>
+            {isCustomer ? (
+              <input
+                type="text"
+                value={customer?.company_name || 'Your Company'}
+                disabled
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-slate-600"
+              />
+            ) : (
+              <select
+                value={formData.customer_id}
+                onChange={(e) => setFormData({ ...formData, customer_id: e.target.value })}
+                className="w-full rounded-lg border border-slate-300 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+                disabled={loadingCustomers}
+              >
+                <option value="">Select customer</option>
+                {customers.map((c) => (
+                  <option key={c.id} value={c.id}>{c.company_name}</option>
+                ))}
+              </select>
+            )}
+            {isCustomer && (
+              <input type="hidden" name="customer_id" value={customer?.id || ''} />
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Warehouse <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={formData.warehouse_id}
+              onChange={(e) => setFormData({ ...formData, warehouse_id: e.target.value })}
+              className="w-full rounded-lg border border-slate-300 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+            >
+              <option value="">Select a warehouse</option>
+              {warehouses.map((w) => (
+                <option key={w.id} value={w.id}>{w.name}</option>
+              ))}
+            </select>
+          </div>
+
           <Input
             label="Required Date"
             type="date"
@@ -421,37 +497,72 @@ function CreateOrderModal({
             </Button>
           </div>
 
+          <div className="relative" ref={productSearchRef}>
+            <input
+              ref={productInputRef}
+              type="text"
+              value={productSearch}
+              onChange={(e) => {
+                setProductSearch(e.target.value);
+                setShowProductDropdown(true);
+              }}
+              onFocus={() => setShowProductDropdown(true)}
+              placeholder="Search product by name or code..."
+              className="w-full rounded-lg border border-slate-300 px-4 py-2.5 pr-10 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            {showProductDropdown && productSearch.trim() !== '' && (
+              <div className="absolute z-10 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                {isProductLoading ? (
+                  <div className="p-4 text-center text-slate-500">Loading...</div>
+                ) : productOptions.length === 0 ? (
+                  <div className="p-4 text-center text-slate-500">No products found</div>
+                ) : (
+                  productOptions.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => handleSelectProduct(p)}
+                      className="w-full px-4 py-2 text-left hover:bg-slate-50 transition-colors flex items-center gap-2 border-b border-slate-100 last:border-0"
+                    >
+                      <Package className="w-4 h-4 text-slate-400" />
+                      <div>
+                        <p className="font-medium text-slate-900">{p.name}</p>
+                        <p className="text-xs text-slate-500">{p.product_code}</p>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
           {items.length === 0 ? (
-            <div className="text-center py-8 bg-slate-50 rounded-lg text-slate-500">
-              No items added. Click "Add Item" to add products.
+            <div className="text-center py-4 bg-slate-50 rounded-lg text-slate-500 text-sm">
+              No items added yet. Start typing above to add products.
             </div>
           ) : (
             <div className="space-y-2">
               {items.map((item, index) => {
-                const product = products.find(p => p.id === item.product_id);
+                const product = productOptions.find(p => p.id === item.product_id);
                 const lineTotal = (product?.unit_price || 0) * item.quantity;
                 return (
                   <div key={index} className="flex items-center gap-4 p-3 bg-slate-50 rounded-lg">
                     <div className="flex-1">
-                      <Select
-                        value={item.product_id}
-                        onChange={(e) => updateItem(index, 'product_id', e.target.value)}
-                        options={products.map(p => ({ value: p.id, label: `${p.name} - ${p.product_code}` }))}
-                        placeholder="Select product"
-                      />
+                      <p className="font-medium text-slate-900">{product?.name || 'Unknown'}</p>
+                      <p className="text-sm text-slate-500">{product?.product_code || ''}</p>
                     </div>
                     <div className="w-24">
                       <Input
                         type="number"
                         value={item.quantity}
-                        onChange={(e) => updateItem(index, 'quantity', Number(e.target.value))}
+                        onChange={(e) => updateItemQuantity(index, Number(e.target.value))}
                         min={1}
                       />
                     </div>
                     <div className="w-32 text-right">
                       <p className="text-sm text-slate-500">Line Total</p>
                       <p className="font-semibold">
-                        {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(lineTotal)}
+                        {`E ${new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(lineTotal)}`}
                       </p>
                     </div>
                     <Button type="button" variant="ghost" size="sm" onClick={() => removeItem(index)}>
@@ -484,6 +595,7 @@ function CreateOrderModal({
   );
 }
 
+// ========== Order Detail Modal ==========
 function OrderDetailModal({
   order,
   isOpen,
@@ -500,22 +612,22 @@ function OrderDetailModal({
   if (!order) return null;
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
+    return `E ${new Intl.NumberFormat('en-US', {
       maximumFractionDigits: 0,
-    }).format(amount);
+    }).format(amount)}`;
   };
 
   const updateStatus = async (newStatus: string) => {
     setIsUpdating(true);
-    await supabase
-      .from('orders')
-      .update({ status: newStatus })
-      .eq('id', order.id);
-    setIsUpdating(false);
-    onUpdate();
-    onClose();
+    try {
+      await apiService.updateOrderStatus(order.id, newStatus);
+      onUpdate();
+      onClose();
+    } catch (error) {
+      console.error('Error updating order status:', error);
+    } finally {
+      setIsUpdating(false);
+    }
   };
 
   const statusSteps = [
