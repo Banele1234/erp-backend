@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { apiService } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { Notification } from '../../types';
@@ -7,6 +8,7 @@ import { Bell, Check, Trash2, ShoppingCart, Package, AlertTriangle, DollarSign, 
 
 export default function NotificationList() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -24,6 +26,27 @@ export default function NotificationList() {
       console.error('Error fetching notifications:', error);
     }
     setIsLoading(false);
+  };
+
+  const handleNotificationClick = async (notification: Notification) => {
+    // 1. Mark as read
+    if (!notification.is_read) {
+      await apiService.markNotificationRead(notification.id);
+      await fetchNotifications();
+    }
+
+    // 2. Navigate with query parameter
+    if (notification.type === 'order' && notification.reference_id) {
+      navigate(`/orders?orderId=${notification.reference_id}`);
+    } else if (notification.type === 'invoice' && notification.reference_id) {
+      navigate(`/invoices?invoiceId=${notification.reference_id}`);
+    } else if (notification.type === 'dispatch' && notification.reference_id) {
+      navigate(`/dispatches?dispatchId=${notification.reference_id}`);
+    } else if (notification.type === 'payment' && notification.reference_id) {
+      navigate(`/payments?paymentId=${notification.reference_id}`);
+    } else {
+      navigate(`/${notification.type}s` || '/');
+    }
   };
 
   const markAsRead = async (id: string) => {
@@ -112,9 +135,10 @@ export default function NotificationList() {
               return (
                 <div
                   key={notification.id}
-                  className={`p-4 hover:bg-slate-50 transition-colors ${
+                  className={`p-4 hover:bg-slate-50 transition-colors cursor-pointer ${
                     !notification.is_read ? 'bg-blue-50/50' : ''
                   }`}
+                  onClick={() => handleNotificationClick(notification)}
                 >
                   <div className="flex items-start gap-4">
                     <div className={`p-2 rounded-lg ${getIconColor(notification.type)}`}>
@@ -142,7 +166,10 @@ export default function NotificationList() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => markAsRead(notification.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              markAsRead(notification.id);
+                            }}
                           >
                             <Check className="w-3 h-3 mr-1" />
                             Mark read
@@ -151,7 +178,10 @@ export default function NotificationList() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => deleteNotification(notification.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteNotification(notification.id);
+                          }}
                           className="text-red-600 hover:text-red-700"
                         >
                           <Trash2 className="w-3 h-3 mr-1" />

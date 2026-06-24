@@ -1,11 +1,29 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { Bell, LogOut, UserCircle, ChevronDown } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { apiService } from '../../lib/api';
 
 export default function Header() {
   const { user, customer, logout } = useAuth();
   const [showDropdown, setShowDropdown] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    if (!user) return;
+    const fetchUnread = async () => {
+      try {
+        const res = await apiService.getNotifications(true);
+        setUnreadCount(res.data?.length || 0);
+      } catch (e) {
+        console.error('Failed to fetch unread count:', e);
+      }
+    };
+    fetchUnread();
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchUnread, 30000);
+    return () => clearInterval(interval);
+  }, [user]);
 
   const roleLabels: Record<string, string> = {
     admin: 'Administrator',
@@ -30,7 +48,11 @@ export default function Header() {
           className="relative p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
         >
           <Bell className="w-5 h-5" />
-          <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
+          {unreadCount > 0 && (
+            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </span>
+          )}
         </Link>
 
         <div className="relative">

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { apiService } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { Order, OrderItem, Customer, Product, Warehouse } from '../../types';
@@ -60,9 +61,31 @@ export default function OrderManagement() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
 
+  // Read orderId from URL query param
+  const [searchParams] = useSearchParams();
+  const orderIdFromUrl = searchParams.get('orderId');
+
   useEffect(() => {
     fetchOrders();
   }, [user, customer]);
+
+  // Auto-open modal if orderId is present in URL
+  useEffect(() => {
+    if (orderIdFromUrl) {
+      const fetchOrderAndOpen = async () => {
+        try {
+          const res = await apiService.getOrder(orderIdFromUrl);
+          setSelectedOrder(res.data);
+          setShowDetailModal(true);
+          // Clear the query param from URL after opening
+          window.history.replaceState({}, '', '/orders');
+        } catch (e) {
+          console.error('Failed to fetch order from notification:', e);
+        }
+      };
+      fetchOrderAndOpen();
+    }
+  }, [orderIdFromUrl]);
 
   const fetchOrders = async () => {
     setIsLoading(true);
@@ -117,7 +140,6 @@ export default function OrderManagement() {
           <h1 className="text-2xl font-bold text-slate-900">Orders</h1>
           <p className="text-slate-500 mt-1">Manage customer orders</p>
         </div>
-        {/* ✅ Show "New Order" button for EVERYONE (customers, admins, etc.) */}
         <Button onClick={() => setShowAddModal(true)}>
           <Plus className="w-4 h-4 mr-2" />
           New Order

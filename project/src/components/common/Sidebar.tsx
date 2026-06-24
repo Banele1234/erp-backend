@@ -42,23 +42,24 @@ export default function Sidebar() {
   const { user } = useAuth();
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // Fetch unread notifications count
-  useEffect(() => {
+  // Function to fetch unread count
+  const fetchUnread = async () => {
     if (!user) return;
-    const fetchUnread = async () => {
-      try {
-        const res = await apiService.getNotifications(true); // true = unread only
-        setUnreadCount(res.data?.length || 0);
-      } catch (e) {
-        console.error('Failed to fetch unread count:', e);
-      }
-    };
-    fetchUnread();
+    try {
+      const res = await apiService.getNotifications(true);
+      setUnreadCount(res.data?.length || 0);
+    } catch (e) {
+      console.error('Failed to fetch unread count:', e);
+    }
+  };
 
-    // Optional: refresh every 30 seconds
+  // Fetch on mount and whenever the route changes (so it updates after navigation)
+  useEffect(() => {
+    fetchUnread();
+    // Refresh every 30 seconds while the user is on any page
     const interval = setInterval(fetchUnread, 30000);
     return () => clearInterval(interval);
-  }, [user]);
+  }, [user, location.pathname]); // ✅ Added location.pathname as a dependency
 
   const filteredMenu = menuItems.filter(item => user && item.roles.includes(user.role));
 
