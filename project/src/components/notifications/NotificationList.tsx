@@ -4,7 +4,7 @@ import { apiService } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { Notification } from '../../types';
 import { Card, Button, Badge, LoadingSpinner, EmptyState } from '../common/StatusBadge';
-import { Bell, Check, Trash2, ShoppingCart, Package, AlertTriangle, DollarSign, Info } from 'lucide-react';
+import { Bell, Check, Trash2, ShoppingCart, Package, AlertTriangle, DollarSign, Info, FileText } from 'lucide-react';
 
 export default function NotificationList() {
   const { user } = useAuth();
@@ -29,13 +29,12 @@ export default function NotificationList() {
   };
 
   const handleNotificationClick = async (notification: Notification) => {
-    // 1. Mark as read
     if (!notification.is_read) {
       await apiService.markNotificationRead(notification.id);
       await fetchNotifications();
+      window.dispatchEvent(new CustomEvent('notification-read'));
     }
 
-    // 2. Navigate with query parameter
     if (notification.type === 'order' && notification.reference_id) {
       navigate(`/orders?orderId=${notification.reference_id}`);
     } else if (notification.type === 'invoice' && notification.reference_id) {
@@ -51,17 +50,20 @@ export default function NotificationList() {
 
   const markAsRead = async (id: string) => {
     await apiService.markNotificationRead(id);
-    fetchNotifications();
+    await fetchNotifications();
+    window.dispatchEvent(new CustomEvent('notification-read'));
   };
 
   const markAllAsRead = async () => {
     await apiService.markAllNotificationsRead();
-    fetchNotifications();
+    await fetchNotifications();
+    window.dispatchEvent(new CustomEvent('notification-read'));
   };
 
   const deleteNotification = async (id: string) => {
     await apiService.deleteNotification(id);
-    fetchNotifications();
+    await fetchNotifications();
+    window.dispatchEvent(new CustomEvent('notification-read'));
   };
 
   const getIcon = (type?: string) => {
@@ -70,6 +72,7 @@ export default function NotificationList() {
       case 'dispatch': return Package;
       case 'payment': return DollarSign;
       case 'rejection': return AlertTriangle;
+      case 'invoice': return FileText;
       default: return Info;
     }
   };
@@ -80,6 +83,7 @@ export default function NotificationList() {
       case 'dispatch': return 'bg-emerald-100 text-emerald-600';
       case 'payment': return 'bg-amber-100 text-amber-600';
       case 'rejection': return 'bg-red-100 text-red-600';
+      case 'invoice': return 'bg-purple-100 text-purple-600';
       default: return 'bg-slate-100 text-slate-600';
     }
   };

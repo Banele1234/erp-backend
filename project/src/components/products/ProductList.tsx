@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { apiService } from '../../lib/api';
-import { Product } from '../../types';
+import { Product, Warehouse } from '../../types';
 import { Card, Button, Badge, Modal, Input, Select, LoadingSpinner, EmptyState, Table, TableHeader, TableBody, TableRow, TableCell } from '../common/StatusBadge';
 import { Plus, Search, Edit, Package, TrendingUp, TrendingDown, AlertTriangle, Filter } from 'lucide-react';
 
@@ -249,7 +249,7 @@ export default function ProductList() {
   );
 }
 
-// ========== Add Product Modal (FIXED) ==========
+// ========== Add Product Modal (UPDATED) ==========
 function AddProductModal({
   isOpen,
   onClose,
@@ -271,19 +271,32 @@ function AddProductModal({
     eoq: 500,
     weight_kg: 0,
   });
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [selectedWarehouse, setSelectedWarehouse] = useState('');
+  const [initialQuantity, setInitialQuantity] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Fetch warehouses when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      apiService.getWarehouses()
+        .then(res => setWarehouses(res.data || []))
+        .catch(err => console.error('Failed to fetch warehouses:', err));
+    }
+  }, [isOpen]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
 
     try {
-      // ✅ Generate a unique product code
       const productCode = `PRD-${Date.now().toString(36).toUpperCase()}`;
 
       const payload = {
         ...formData,
         product_code: productCode,
+        warehouse_id: selectedWarehouse || undefined,
+        initial_quantity: initialQuantity || 0,
       };
 
       await apiService.createProduct(payload);
@@ -301,6 +314,8 @@ function AddProductModal({
         eoq: 500,
         weight_kg: 0,
       });
+      setSelectedWarehouse('');
+      setInitialQuantity(0);
     } catch (error) {
       console.error('Error adding product:', error);
     }
@@ -389,6 +404,25 @@ function AddProductModal({
           />
         </div>
 
+        {/* ✅ New fields: Warehouse and Initial Quantity */}
+        <div className="grid grid-cols-2 gap-4">
+          <Select
+            label="Warehouse (optional)"
+            value={selectedWarehouse}
+            onChange={(e) => setSelectedWarehouse(e.target.value)}
+            options={warehouses.map(w => ({ value: w.id, label: w.name }))}
+            placeholder="Select warehouse"
+          />
+          <Input
+            label="Initial Quantity"
+            type="number"
+            value={initialQuantity}
+            onChange={(e) => setInitialQuantity(Number(e.target.value))}
+            min={0}
+            helpText="If not set, stock will be 0"
+          />
+        </div>
+
         <div className="flex justify-end gap-3 pt-4">
           <Button variant="outline" onClick={onClose} type="button">
             Cancel
@@ -402,7 +436,7 @@ function AddProductModal({
   );
 }
 
-// ========== Edit Product Modal ==========
+// ========== Edit Product Modal (unchanged) ==========
 function EditProductModal({
   product,
   isOpen,

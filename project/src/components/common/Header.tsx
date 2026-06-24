@@ -11,6 +11,7 @@ export default function Header() {
 
   useEffect(() => {
     if (!user) return;
+
     const fetchUnread = async () => {
       try {
         const res = await apiService.getNotifications(true);
@@ -19,10 +20,22 @@ export default function Header() {
         console.error('Failed to fetch unread count:', e);
       }
     };
+
     fetchUnread();
-    // Refresh every 30 seconds
+
+    // ✅ Listen for "notification-read" custom event
+    const handleNotificationRead = () => {
+      fetchUnread();
+    };
+    window.addEventListener('notification-read', handleNotificationRead);
+
+    // Refresh every 30 seconds as a fallback
     const interval = setInterval(fetchUnread, 30000);
-    return () => clearInterval(interval);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('notification-read', handleNotificationRead);
+    };
   }, [user]);
 
   const roleLabels: Record<string, string> = {

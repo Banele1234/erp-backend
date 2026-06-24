@@ -71,22 +71,67 @@ export const getProductById = async (req: Request, res: Response, next: NextFunc
 
 export const createProduct = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
+    const {
+      name,
+      description,
+      category,
+      unit,
+      unit_price,
+      cost_price,
+      gst_percentage,
+      reorder_level,
+      eoq,
+      weight_kg,
+      warehouse_id,      // optional
+      initial_quantity,  // optional (default 0)
+    } = req.body;
+
     const productCode = `PRD-${Date.now().toString(36).toUpperCase()}`;
 
-    const { data, error } = await supabase
+    // Insert product
+    const { data: product, error: productError } = await supabase
       .from('products')
       .insert({
         product_code: productCode,
-        ...req.body,
+        name,
+        description,
+        category,
+        unit,
+        unit_price,
+        cost_price,
+        gst_percentage,
+        reorder_level,
+        eoq,
+        weight_kg,
+        is_active: true,
       })
       .select()
       .single();
 
-    if (error) {
-      throw createError(error.message, 400);
+    if (productError) {
+      throw createError(productError.message, 400);
     }
 
-    res.status(201).json({ success: true, data });
+    // If warehouse_id is provided, insert inventory record
+    if (warehouse_id) {
+      const quantity = initial_quantity || 0;
+      const { error: invError } = await supabase
+        .from('inventory')
+        .insert({
+          product_id: product.id,
+          warehouse_id: warehouse_id,
+          quantity: quantity,
+          reserved_quantity: 0,
+          available_quantity: quantity,
+        });
+
+      if (invError) {
+        console.warn('⚠️ Failed to create inventory record:', invError);
+        // Not failing the request – product created, but inventory not set.
+      }
+    }
+
+    res.status(201).json({ success: true, data: product });
   } catch (error) {
     next(error);
   }

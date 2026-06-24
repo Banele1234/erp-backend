@@ -42,7 +42,6 @@ export default function Sidebar() {
   const { user } = useAuth();
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // Function to fetch unread count
   const fetchUnread = async () => {
     if (!user) return;
     try {
@@ -53,13 +52,23 @@ export default function Sidebar() {
     }
   };
 
-  // Fetch on mount and whenever the route changes (so it updates after navigation)
   useEffect(() => {
     fetchUnread();
-    // Refresh every 30 seconds while the user is on any page
+
+    // ✅ Listen for "notification-read" custom event
+    const handleNotificationRead = () => {
+      fetchUnread();
+    };
+    window.addEventListener('notification-read', handleNotificationRead);
+
+    // Refresh every 30 seconds as a fallback
     const interval = setInterval(fetchUnread, 30000);
-    return () => clearInterval(interval);
-  }, [user, location.pathname]); // ✅ Added location.pathname as a dependency
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('notification-read', handleNotificationRead);
+    };
+  }, [user, location.pathname]);
 
   const filteredMenu = menuItems.filter(item => user && item.roles.includes(user.role));
 
@@ -85,8 +94,6 @@ export default function Sidebar() {
           {filteredMenu.map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.path;
-
-            // Special handling for Notifications – show badge
             const isNotifications = item.path === '/notifications';
 
             return (
@@ -116,7 +123,6 @@ export default function Sidebar() {
       </nav>
 
       <div className="p-4 border-t border-slate-700">
-        {/* Settings – only visible to admins */}
         {user?.role === 'admin' && (
           <Link
             to="/settings"
@@ -126,7 +132,6 @@ export default function Sidebar() {
             <span className="font-medium">Settings</span>
           </Link>
         )}
-        {/* Profile – visible to everyone */}
         <Link
           to="/profile"
           className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-all"

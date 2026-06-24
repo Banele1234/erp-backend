@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { apiService } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { Invoice, Order, Customer } from '../../types';
@@ -49,6 +49,7 @@ export default function InvoiceManagement() {
     return matchesSearch && matchesStatus;
   });
 
+  // Currency formatter – Emalangi (E)
   const formatCurrency = (amount: number) => {
     return `E ${new Intl.NumberFormat('en-US', {
       maximumFractionDigits: 0,
@@ -57,7 +58,7 @@ export default function InvoiceManagement() {
 
   const totalOutstanding = invoices
     .filter(i => i.payment_status !== 'paid')
-    .reduce((sum, i) => sum + i.amount_due, 0);
+    .reduce((sum, i) => sum + (i.total_amount - i.amount_paid), 0);
 
   if (isLoading) {
     return (
@@ -222,6 +223,7 @@ export default function InvoiceManagement() {
   );
 }
 
+// ========== Invoice Detail Modal with Print & Download ==========
 function InvoiceDetailModal({
   invoice,
   isOpen,
@@ -233,23 +235,55 @@ function InvoiceDetailModal({
   onClose: () => void;
   onUpdate: () => void;
 }) {
+  const printRef = useRef<HTMLDivElement>(null);
+
   if (!invoice) return null;
 
+  // Currency formatter – Emalangi (E)
   const formatCurrency = (amount: number) => {
     return `E ${new Intl.NumberFormat('en-US', {
       maximumFractionDigits: 0,
     }).format(amount)}`;
   };
 
+  // Print function
+  const handlePrint = () => {
+    window.print();
+  };
+
+  // Download as CSV (simple invoice receipt)
+  const handleDownload = () => {
+    const rows = [
+      ['Invoice Number', invoice.invoice_number],
+      ['Customer', invoice.customer?.company_name || 'N/A'],
+      ['Invoice Date', new Date(invoice.invoice_date).toLocaleDateString()],
+      ['Due Date', invoice.due_date ? new Date(invoice.due_date).toLocaleDateString() : 'N/A'],
+      ['Subtotal', formatCurrency(invoice.subtotal)],
+      ['Discount', formatCurrency(invoice.discount_amount)],
+      ['Tax (GST)', formatCurrency(invoice.tax_amount)],
+      ['Total', formatCurrency(invoice.total_amount)],
+      ['Amount Paid', formatCurrency(invoice.amount_paid)],
+      ['Amount Due', formatCurrency(invoice.amount_due)],
+      ['Status', invoice.payment_status.toUpperCase()],
+    ];
+    const csvContent = rows.map(row => row.join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `invoice_${invoice.invoice_number}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Invoice Details" size="lg">
-      <div className="space-y-6">
-        <div className="flex items-center justify-between bg-gradient-to-r from-blue-600 to-blue-800 -mx-6 -mt-6 p-6 rounded-t-xl">
+      <div className="space-y-6" ref={printRef}>
+        <div className="flex items-center justify-between bg-gradient-to-r from-blue-600 to-blue-800 -mx-6 -mt-6 p-6 rounded-t-xl print:bg-blue-600 print:text-white">
           <div className="text-white">
             <h3 className="text-xl font-bold">{invoice.invoice_number}</h3>
             <p className="text-blue-100">{invoice.customer?.company_name}</p>
           </div>
-          <Badge className="bg-white text-blue-700" size="lg">
+          <Badge className="bg-white text-blue-700 print:bg-white print:text-blue-700" size="lg">
             {invoice.payment_status.toUpperCase()}
           </Badge>
         </div>
@@ -274,7 +308,7 @@ function InvoiceDetailModal({
           </div>
         </div>
 
-        <div className="bg-slate-50 rounded-lg p-4 space-y-2">
+        <div className="bg-slate-50 rounded-lg p-4 space-y-2 print:bg-white print:border print:border-slate-300">
           <div className="flex justify-between">
             <span className="text-slate-600">Subtotal</span>
             <span className="font-medium">{formatCurrency(invoice.subtotal)}</span>
@@ -301,17 +335,17 @@ function InvoiceDetailModal({
           </div>
         </div>
 
-        <div className="flex justify-end gap-3 pt-4">
+        <div className="flex justify-end gap-3 pt-4 print:hidden">
           <Button variant="outline" onClick={onClose}>
             Close
           </Button>
-          <Button variant="outline">
+          <Button variant="outline" onClick={handlePrint}>
             <Printer className="w-4 h-4 mr-2" />
             Print
           </Button>
-          <Button variant="outline">
+          <Button variant="outline" onClick={handleDownload}>
             <Download className="w-4 h-4 mr-2" />
-            Download PDF
+            Download CSV
           </Button>
         </div>
       </div>

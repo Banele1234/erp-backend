@@ -61,7 +61,6 @@ export default function OrderManagement() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
 
-  // Read orderId from URL query param
   const [searchParams] = useSearchParams();
   const orderIdFromUrl = searchParams.get('orderId');
 
@@ -69,7 +68,6 @@ export default function OrderManagement() {
     fetchOrders();
   }, [user, customer]);
 
-  // Auto-open modal if orderId is present in URL
   useEffect(() => {
     if (orderIdFromUrl) {
       const fetchOrderAndOpen = async () => {
@@ -77,7 +75,6 @@ export default function OrderManagement() {
           const res = await apiService.getOrder(orderIdFromUrl);
           setSelectedOrder(res.data);
           setShowDetailModal(true);
-          // Clear the query param from URL after opening
           window.history.replaceState({}, '', '/orders');
         } catch (e) {
           console.error('Failed to fetch order from notification:', e);
@@ -234,7 +231,8 @@ export default function OrderManagement() {
                   </TableCell>
                   <TableCell>{order.customer?.company_name}</TableCell>
                   <TableCell>{formatDate(order.order_date)}</TableCell>
-                  <TableCell>{order.items?.length || 0} items</TableCell>
+                  {/* ✅ FIXED: use itemCount from backend */}
+                  <TableCell>{order.itemCount || 0} items</TableCell>
                   <TableCell className="font-semibold">{formatCurrency(order.total_amount)}</TableCell>
                   <TableCell>
                     <Badge variant={statusColors[order.status] as any}>
@@ -245,9 +243,14 @@ export default function OrderManagement() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => {
-                        setSelectedOrder(order);
-                        setShowDetailModal(true);
+                      onClick={async () => {
+                        try {
+                          const res = await apiService.getOrder(order.id);
+                          setSelectedOrder(res.data);
+                          setShowDetailModal(true);
+                        } catch (e) {
+                          console.error('Failed to fetch order details:', e);
+                        }
                       }}
                     >
                       <Eye className="w-4 h-4" />
@@ -299,6 +302,7 @@ function CreateOrderModal({
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loadingCustomers, setLoadingCustomers] = useState(false);
 
+  // Product search
   const [productSearch, setProductSearch] = useState('');
   const [productOptions, setProductOptions] = useState<Product[]>([]);
   const [isProductLoading, setIsProductLoading] = useState(false);
@@ -306,7 +310,11 @@ function CreateOrderModal({
   const productSearchRef = useRef<HTMLDivElement>(null);
   const productInputRef = useRef<HTMLInputElement>(null);
 
-  const [items, setItems] = useState<{ product_id: string; quantity: number }[]>([]);
+  // Items store product details directly
+  const [items, setItems] = useState<
+    { product_id: string; quantity: number; product_name: string; unit_price: number; gst_percentage: number }[]
+  >([]);
+
   const [formData, setFormData] = useState({
     customer_id: '',
     warehouse_id: '',
@@ -344,6 +352,7 @@ function CreateOrderModal({
     }
   };
 
+  // Debounced product search – exclude already added products
   useEffect(() => {
     if (!productSearch.trim()) {
       setProductOptions([]);
@@ -353,7 +362,9 @@ function CreateOrderModal({
       setIsProductLoading(true);
       try {
         const res = await apiService.getProducts({ search: productSearch, limit: 50 });
-        setProductOptions(res.data || []);
+        const addedIds = items.map(i => i.product_id);
+        const filtered = (res.data || []).filter(p => !addedIds.includes(p.id));
+        setProductOptions(filtered);
       } catch (err) {
         console.error('Product search error:', err);
         setProductOptions([]);
@@ -362,7 +373,7 @@ function CreateOrderModal({
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [productSearch]);
+  }, [productSearch, items]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -380,10 +391,20 @@ function CreateOrderModal({
       setError('Product already added.');
       return;
     }
-    setItems([...items, { product_id: product.id, quantity: 1 }]);
+    setItems([
+      ...items,
+      {
+        product_id: product.id,
+        quantity: 1,
+        product_name: product.name,
+        unit_price: product.unit_price || 0,
+        gst_percentage: product.gst_percentage || 18,
+      },
+    ]);
     setProductSearch('');
     setProductOptions([]);
     setShowProductDropdown(false);
+    setError('');
     productInputRef.current?.focus();
   };
 
@@ -431,6 +452,7 @@ function CreateOrderModal({
       onSuccess();
       setItems([]);
       setFormData({ customer_id: '', warehouse_id: '', notes: '', required_date: '' });
+      setProductSearch('');
     } catch (error: any) {
       console.error('Error creating order:', error);
       setError(error.message || 'Failed to create order. Please try again.');
@@ -565,13 +587,11 @@ function CreateOrderModal({
           ) : (
             <div className="space-y-2">
               {items.map((item, index) => {
-                const product = productOptions.find(p => p.id === item.product_id);
-                const lineTotal = (product?.unit_price || 0) * item.quantity;
+                const lineTotal = (item.unit_price || 0) * item.quantity;
                 return (
                   <div key={index} className="flex items-center gap-4 p-3 bg-slate-50 rounded-lg">
                     <div className="flex-1">
-                      <p className="font-medium text-slate-900">{product?.name || 'Unknown'}</p>
-                      <p className="text-sm text-slate-500">{product?.product_code || ''}</p>
+                      <p className="font-medium text-slate-900">{item.product_name || 'Unknown'}</p>
                     </div>
                     <div className="w-24">
                       <Input
@@ -629,9 +649,12 @@ function OrderDetailModal({
   onClose: () => void;
   onUpdate: () => void;
 }) {
+  const { user } = useAuth();
   const [isUpdating, setIsUpdating] = useState(false);
 
   if (!order) return null;
+
+  const canUpdateStatus = user?.role && ['admin', 'management', 'warehouse_staff'].includes(user.role);
 
   const formatCurrency = (amount: number) => {
     return `E ${new Intl.NumberFormat('en-US', {
@@ -743,11 +766,17 @@ function OrderDetailModal({
             <p className="text-sm text-slate-500">Order Total</p>
             <p className="text-2xl font-bold text-slate-900">{formatCurrency(order.total_amount)}</p>
           </div>
-          {order.status !== 'delivered' && order.status !== 'cancelled' && (
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => updateStatus('cancelled')}>
+          <div className="flex gap-2">
+            {(order.status === 'pending' || order.status === 'confirmed') && (
+              <Button
+                variant="outline"
+                onClick={() => updateStatus('cancelled')}
+                className="text-red-600 border-red-300 hover:bg-red-50"
+              >
                 Cancel Order
               </Button>
+            )}
+            {canUpdateStatus && order.status !== 'delivered' && order.status !== 'cancelled' && (
               <Button onClick={() => {
                 const nextIndex = statusSteps.indexOf(order.status) + 1;
                 if (nextIndex < statusSteps.length) {
@@ -757,8 +786,8 @@ function OrderDetailModal({
                 <Send className="w-4 h-4 mr-2" />
                 Update Status
               </Button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </Modal>
