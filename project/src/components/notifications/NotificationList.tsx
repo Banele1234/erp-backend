@@ -1,0 +1,205 @@
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { apiService } from '../../lib/api';
+import { useAuth } from '../../context/AuthContext';
+import { Notification } from '../../types';
+import { Card, Button, Badge, LoadingSpinner, EmptyState } from '../common/StatusBadge';
+import { Bell, Check, Trash2, ShoppingCart, Package, AlertTriangle, DollarSign, Info, FileText } from 'lucide-react';
+
+export default function NotificationList() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    fetchNotifications();
+  }, [user]);
+
+  const fetchNotifications = async () => {
+    if (!user) return;
+    setIsLoading(true);
+    try {
+      const response = await apiService.getNotifications(false);
+      setNotifications(response.data || []);
+    } catch (error) {
+      console.error('Error fetching notifications:', error);
+    }
+    setIsLoading(false);
+  };
+
+  const handleNotificationClick = async (notification: Notification) => {
+    if (!notification.is_read) {
+      await apiService.markNotificationRead(notification.id);
+      await fetchNotifications();
+      window.dispatchEvent(new CustomEvent('notification-read'));
+    }
+
+    if (notification.type === 'order' && notification.reference_id) {
+      navigate(`/orders?orderId=${notification.reference_id}`);
+    } else if (notification.type === 'invoice' && notification.reference_id) {
+      navigate(`/invoices?invoiceId=${notification.reference_id}`);
+    } else if (notification.type === 'dispatch' && notification.reference_id) {
+      navigate(`/dispatches?dispatchId=${notification.reference_id}`);
+    } else if (notification.type === 'payment' && notification.reference_id) {
+      navigate(`/payments?paymentId=${notification.reference_id}`);
+    } else {
+      navigate(`/${notification.type}s` || '/');
+    }
+  };
+
+  const markAsRead = async (id: string) => {
+    await apiService.markNotificationRead(id);
+    await fetchNotifications();
+    window.dispatchEvent(new CustomEvent('notification-read'));
+  };
+
+  const markAllAsRead = async () => {
+    await apiService.markAllNotificationsRead();
+    await fetchNotifications();
+    window.dispatchEvent(new CustomEvent('notification-read'));
+  };
+
+  const deleteNotification = async (id: string) => {
+    await apiService.deleteNotification(id);
+    await fetchNotifications();
+    window.dispatchEvent(new CustomEvent('notification-read'));
+  };
+
+  const getIcon = (type?: string) => {
+    switch (type) {
+      case 'order': return ShoppingCart;
+      case 'dispatch': return Package;
+      case 'payment': return DollarSign;
+      case 'rejection': return AlertTriangle;
+      case 'invoice': return FileText;
+      default: return Info;
+    }
+  };
+
+  const getIconColor = (type?: string) => {
+    switch (type) {
+      case 'order': return 'bg-blue-100 text-blue-600';
+      case 'dispatch': return 'bg-emerald-100 text-emerald-600';
+      case 'payment': return 'bg-amber-100 text-amber-600';
+      case 'rejection': return 'bg-red-100 text-red-600';
+      case 'invoice': return 'bg-purple-100 text-purple-600';
+      default: return 'bg-slate-100 text-slate-600';
+    }
+  };
+
+  const formatTime = (date: string) => {
+    const now = new Date();
+    const notificationDate = new Date(date);
+    const diffMs = now.getTime() - notificationDate.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return `${diffDays}d ago`;
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <LoadingSpinner size="lg" />
+      </div>
+    );
+  }
+
+  const unreadCount = notifications.filter(n => !n.is_read).length;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Notifications</h1>
+          <p className="text-slate-500 mt-1">
+            {unreadCount > 0 ? `${unreadCount} unread notifications` : 'All caught up!'}
+          </p>
+        </div>
+        {unreadCount > 0 && (
+          <Button variant="outline" onClick={markAllAsRead}>
+            <Check className="w-4 h-4 mr-2" />
+            Mark all as read
+          </Button>
+        )}
+      </div>
+
+      <Card>
+        {notifications.length === 0 ? (
+          <EmptyState message="No notifications" />
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {notifications.map((notification) => {
+              const Icon = getIcon(notification.type);
+              return (
+                <div
+                  key={notification.id}
+                  className={`p-4 hover:bg-slate-50 transition-colors cursor-pointer ${
+                    !notification.is_read ? 'bg-blue-50/50' : ''
+                  }`}
+                  onClick={() => handleNotificationClick(notification)}
+                >
+                  <div className="flex items-start gap-4">
+                    <div className={`p-2 rounded-lg ${getIconColor(notification.type)}`}>
+                      <Icon className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <p className={`font-medium ${!notification.is_read ? 'text-slate-900' : 'text-slate-600'}`}>
+                            {notification.title}
+                          </p>
+                          {notification.message && (
+                            <p className="text-sm text-slate-500 mt-1">{notification.message}</p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-400">{formatTime(notification.created_at)}</span>
+                          {!notification.is_read && (
+                            <div className="w-2 h-2 bg-blue-500 rounded-full" />
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 mt-2">
+                        {!notification.is_read && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              markAsRead(notification.id);
+                            }}
+                          >
+                            <Check className="w-3 h-3 mr-1" />
+                            Mark read
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteNotification(notification.id);
+                          }}
+                          className="text-red-600 hover:text-red-700"
+                        >
+                          <Trash2 className="w-3 h-3 mr-1" />
+                          Delete
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
