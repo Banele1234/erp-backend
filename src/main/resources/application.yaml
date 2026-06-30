@@ -4,55 +4,46 @@ spring:
     username: postgres.ivdtjwkrhtmvhueaemru
     password: NQApqTqbPycGKcz8
     driver-class-name: org.postgresql.Driver
-
-    # ✅ HikariCP settings for Supabase/PgBouncer compatibility
     hikari:
-      # Disable PgJDBC prepared‑statement caching (required for PgBouncer)
       data-source-properties:
         prepareThreshold: 0
         preparedStatementCacheQueries: 0
-
-      # ✅ Prevent stale connections (Supabase idle timeout ~10 min)
-      maxLifetime: 180000              # 3 minutes (milliseconds)
-      connectionTimeout: 30000         # 30 seconds
-      validationTimeout: 5000          # 5 seconds
-      connection-test-query: SELECT 1  # Validate before use
+      maxLifetime: 180000
+      connectionTimeout: 30000
+      validationTimeout: 5000
+      connection-test-query: SELECT 1
       minimumIdle: 2
       maximumPoolSize: 10
 
   jpa:
     hibernate:
-      ddl-auto: update   # safe for dev; remove in production
+      ddl-auto: update
     show-sql: true
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
-        # ✅ Release connections after each transaction to avoid holding them
         connection.release_mode: after_transaction
 
-  # ✅ CORS configuration for frontend access
   web:
     cors:
-      allowed-origins: http://localhost:5173
-      allowed-methods: GET,POST,PUT,DELETE,OPTIONS
+      allowed-origins: 
+        - http://localhost:5173
+        - https://autoancillarieslimited.netlify.app
+      allowed-methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
       allowed-headers: '*'
       allow-credentials: true
 
-# JWT Settings
 app:
   jwt:
     secret: urSFJGdbsp4NTzMGZmssNy7wm2mLjNSt
-    expirationMs: 604800000   # 7 days
+    expirationMs: 604800000
 
-# CORS (frontend origin) – kept for reference if used elsewhere
 app.frontend.url: http://localhost:5173
 
-# Server port
 server:
   port: 8080
 
-# Supabase Auth credentials (optional)
 supabase:
   url: https://ivdtjwkrhtmvhueaemru.supabase.co
   anon-key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml2ZHRqd2tyaHRtdmh1ZWFlbXJ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4NTQzOTksImV4cCI6MjA5NzQzMDM5OX0.d_z0jKzOKuONqx70d2Q7rhSwGvPehS4OZLySn-5kKJs
