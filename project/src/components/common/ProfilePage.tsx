@@ -1,80 +1,118 @@
-import { useState } from 'react';
+// src/components/common/ProfilePage.tsx
+
 import { useAuth } from '../../context/AuthContext';
-import {
-  Mail,
-  ShieldCheck,
-  Calendar,
-  Building2,
-  UserCircle,
-  Pencil,
-  Save,
-  X,
-  Loader2,
-  Phone,
-  MapPin,
-} from 'lucide-react';
+import { Card, Badge, Button, LoadingSpinner, Input } from '../common/StatusBadge';
+import { User, Mail, Phone, Building, MapPin, Calendar, AlertCircle, Save, X } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import { apiService } from '../../lib/api';
 
 export default function ProfilePage() {
-  const { user, customer, refreshUser } = useAuth();
+  const { user, customer, isLoading, refreshUser } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // Form state – initialised from user/customer
+  // Form state – snake_case to match backend
   const [formData, setFormData] = useState({
-    full_name: user?.full_name || '',
-    company_name: customer?.company_name || '',
-    phone: customer?.phone || '',
-    address: customer?.address || '',
-    city: customer?.city || '',
-    state: customer?.state || '',
-    pincode: customer?.pincode || '',
-    gst_number: customer?.gst_number || '',
+    full_name: '',
+    company_name: '',
+    phone: '',
+    address: '',
+    city: '',
+    state: '',
+    pincode: '',
+    gst_number: '',
   });
 
-  const roleLabels: Record<string, string> = {
-    admin: 'Administrator',
-    management: 'Management',
-    warehouse_staff: 'Warehouse Staff',
-    customer: 'Customer',
-    production: 'Production',
-  };
+  // Populate form when user/customer data loads
+  useEffect(() => {
+    if (user && customer) {
+      setFormData({
+        full_name: user.full_name || user.fullName || '',
+        company_name: customer.companyName || customer.company_name || '',
+        phone: user.phone || user.phone_number || '',
+        address: customer.address || '',
+        city: customer.city || '',
+        state: customer.state || '',
+        pincode: customer.pincode || customer.postal_code || '',
+        gst_number: customer.gstNumber || customer.gst_number || '',
+      });
+    }
+  }, [user, customer]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <LoadingSpinner size="lg" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="text-center">
+          <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+          <p className="text-slate-600">User not found. Please log in again.</p>
+        </div>
+      </div>
+    );
+  }
+
+  const email = user.email || 'Not available';
+  const memberSince = user.created_at || user.createdAt || user.created_date || 'N/A';
+  const isActive = user.is_active !== undefined ? user.is_active : (user.active !== undefined ? user.active : false);
+  const userType = user.role || user.user_type || 'N/A';
+  const rating = customer?.rating || 'N/A';
+  const customerType = customer?.customerType || customer?.customer_type || '—';
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+    setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
   const handleSave = async () => {
-    setLoading(true);
     setError('');
     setSuccess('');
+    setIsSaving(true);
+
     try {
-      await apiService.updateProfile(formData);
-      // Refresh auth context with updated user/customer
-      await refreshUser();
+      // ✅ Send only the fields (snake_case) – no IDs
+      const updateData = {
+        full_name: formData.full_name,
+        company_name: formData.company_name,
+        phone: formData.phone,
+        address: formData.address,
+        city: formData.city,
+        state: formData.state,
+        pincode: formData.pincode,
+        gst_number: formData.gst_number,
+      };
+
+      await apiService.updateProfile(updateData);
       setSuccess('Profile updated successfully!');
+      await refreshUser(); // refresh user and customer data
       setIsEditing(false);
       setTimeout(() => setSuccess(''), 3000);
     } catch (err: any) {
-      setError(err.message || 'Failed to update profile');
+      console.error('Update error:', err);
+      setError(err.message || 'Failed to update profile. Please try again.');
     } finally {
-      setLoading(false);
+      setIsSaving(false);
     }
   };
 
   const handleCancel = () => {
-    // Reset form to current user/customer data
+    // Reset form to current data
     setFormData({
-      full_name: user?.full_name || '',
-      company_name: customer?.company_name || '',
-      phone: customer?.phone || '',
+      full_name: user.full_name || user.fullName || '',
+      company_name: customer?.companyName || customer?.company_name || '',
+      phone: user.phone || user.phone_number || '',
       address: customer?.address || '',
       city: customer?.city || '',
       state: customer?.state || '',
-      pincode: customer?.pincode || '',
-      gst_number: customer?.gst_number || '',
+      pincode: customer?.pincode || customer?.postal_code || '',
+      gst_number: customer?.gstNumber || customer?.gst_number || '',
     });
     setIsEditing(false);
     setError('');
@@ -83,255 +121,203 @@ export default function ProfilePage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-white text-2xl font-semibold">
-              {user?.full_name?.charAt(0).toUpperCase() || 'U'}
-            </div>
-            <div>
-              <p className="text-sm text-slate-500">Profile</p>
-              <h1 className="text-2xl font-semibold text-slate-900">{user?.full_name || 'User'}</h1>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700">
-              <ShieldCheck className="w-4 h-4" />
-              {roleLabels[user?.role || ''] || 'User'}
-            </span>
-            {!isEditing && (
-              <button
-                onClick={() => setIsEditing(true)}
-                className="inline-flex items-center gap-2 rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200 transition-colors"
-              >
-                <Pencil className="w-4 h-4" />
-                Edit
-              </button>
-            )}
-          </div>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Profile</h1>
+          <p className="text-slate-500 mt-1">Manage your account details</p>
         </div>
+        {!isEditing ? (
+          <Button variant="outline" onClick={() => setIsEditing(true)}>
+            Edit
+          </Button>
+        ) : (
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handleCancel} disabled={isSaving}>
+              <X className="w-4 h-4 mr-1" /> Cancel
+            </Button>
+            <Button onClick={handleSave} isLoading={isSaving}>
+              <Save className="w-4 h-4 mr-1" /> Save Changes
+            </Button>
+          </div>
+        )}
       </div>
 
-      {/* Error / Success */}
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
           {error}
         </div>
       )}
       {success && (
-        <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
-          <Save className="w-4 h-4" />
+        <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm">
           {success}
         </div>
       )}
 
-      {/* Profile content */}
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Personal Information */}
-        <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <h2 className="text-lg font-semibold text-slate-900 mb-4">Personal Information</h2>
-          <div className="grid gap-4 sm:grid-cols-2">
-            {/* Full Name */}
-            <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Full Name</p>
-              {isEditing ? (
-                <input
-                  type="text"
+        <Card className="lg:col-span-2">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-blue-100 rounded-lg">
+              <User className="w-5 h-5 text-blue-600" />
+            </div>
+            <h3 className="font-semibold text-slate-900">Personal Information</h3>
+          </div>
+
+          {!isEditing ? (
+            // View mode
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-sm text-slate-500">Full Name</p>
+                <p className="font-medium text-slate-900">{formData.full_name || 'Not available'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-slate-500">Email</p>
+                <p className="font-medium text-slate-900">{email}</p>
+              </div>
+              <div>
+                <p className="text-sm text-slate-500">Company</p>
+                <p className="font-medium text-slate-900">{formData.company_name || '—'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-slate-500">Phone</p>
+                <p className="font-medium text-slate-900">{formData.phone || 'Not available'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-slate-500">Address</p>
+                <p className="font-medium text-slate-900">{formData.address || '—'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-slate-500">City</p>
+                <p className="font-medium text-slate-900">{formData.city || '—'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-slate-500">State</p>
+                <p className="font-medium text-slate-900">{formData.state || '—'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-slate-500">Pincode</p>
+                <p className="font-medium text-slate-900">{formData.pincode || '—'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-slate-500">GST Number</p>
+                <p className="font-medium text-slate-900">{formData.gst_number || '—'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-slate-500">Member Since</p>
+                <p className="font-medium text-slate-900">
+                  {memberSince !== 'N/A' ? new Date(memberSince).toLocaleDateString() : 'N/A'}
+                </p>
+              </div>
+            </div>
+          ) : (
+            // Edit mode
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label>
+                <Input
                   name="full_name"
                   value={formData.full_name}
                   onChange={handleChange}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Full Name"
                 />
-              ) : (
-                <p className="text-sm text-slate-900">{user?.full_name || 'Not available'}</p>
-              )}
-            </div>
-
-            {/* Email (read-only) */}
-            <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Email</p>
-              <p className="flex items-center gap-2 text-sm text-slate-900">
-                <Mail className="w-4 h-4 text-slate-400" />
-                {user?.email || 'Not available'}
-              </p>
-            </div>
-
-            {/* Company */}
-            <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Company</p>
-              {isEditing ? (
-                <input
-                  type="text"
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
+                <Input value={email} disabled className="bg-slate-50" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Company</label>
+                <Input
                   name="company_name"
                   value={formData.company_name}
                   onChange={handleChange}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Company Name"
                 />
-              ) : (
-                <p className="text-sm text-slate-900">{customer?.company_name || '—'}</p>
-              )}
-            </div>
-
-            {/* Phone */}
-            <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Phone</p>
-              {isEditing ? (
-                <input
-                  type="tel"
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Phone</label>
+                <Input
                   name="phone"
                   value={formData.phone}
                   onChange={handleChange}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Phone Number"
                 />
-              ) : (
-                <p className="flex items-center gap-2 text-sm text-slate-900">
-                  <Phone className="w-4 h-4 text-slate-400" />
-                  {customer?.phone || '—'}
-                </p>
-              )}
-            </div>
-
-            {/* Address */}
-            <div className="space-y-1 sm:col-span-2">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Address</p>
-              {isEditing ? (
-                <input
-                  type="text"
+              </div>
+              <div className="col-span-2">
+                <label className="block text-sm font-medium text-slate-700 mb-1">Address</label>
+                <Input
                   name="address"
                   value={formData.address}
                   onChange={handleChange}
-                  placeholder="Street address"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Street Address"
                 />
-              ) : (
-                <p className="flex items-center gap-2 text-sm text-slate-900">
-                  <MapPin className="w-4 h-4 text-slate-400" />
-                  {customer?.address || '—'}
-                </p>
-              )}
-            </div>
-
-            {/* City, State, Pincode */}
-            <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">City</p>
-              {isEditing ? (
-                <input
-                  type="text"
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">City</label>
+                <Input
                   name="city"
                   value={formData.city}
                   onChange={handleChange}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="City"
                 />
-              ) : (
-                <p className="text-sm text-slate-900">{customer?.city || '—'}</p>
-              )}
-            </div>
-            <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">State</p>
-              {isEditing ? (
-                <input
-                  type="text"
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">State</label>
+                <Input
                   name="state"
                   value={formData.state}
                   onChange={handleChange}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="State/Province"
                 />
-              ) : (
-                <p className="text-sm text-slate-900">{customer?.state || '—'}</p>
-              )}
-            </div>
-            <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Pincode</p>
-              {isEditing ? (
-                <input
-                  type="text"
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Pincode</label>
+                <Input
                   name="pincode"
                   value={formData.pincode}
                   onChange={handleChange}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Postal Code"
                 />
-              ) : (
-                <p className="text-sm text-slate-900">{customer?.pincode || '—'}</p>
-              )}
-            </div>
-
-            {/* GST */}
-            <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">GST Number</p>
-              {isEditing ? (
-                <input
-                  type="text"
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">GST Number</label>
+                <Input
                   name="gst_number"
                   value={formData.gst_number}
                   onChange={handleChange}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="GST Number"
                 />
-              ) : (
-                <p className="text-sm text-slate-900">{customer?.gst_number || '—'}</p>
-              )}
-            </div>
-
-            {/* Member Since (read-only) */}
-            <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Member Since</p>
-              <p className="flex items-center gap-2 text-sm text-slate-900">
-                <Calendar className="w-4 h-4 text-slate-400" />
-                {user?.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}
-              </p>
-            </div>
-          </div>
-
-          {/* Edit actions */}
-          {isEditing && (
-            <div className="mt-6 flex gap-3 border-t border-slate-200 pt-4">
-              <button
-                onClick={handleSave}
-                disabled={loading}
-                className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
-              >
-                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                {loading ? 'Saving...' : 'Save Changes'}
-              </button>
-              <button
-                onClick={handleCancel}
-                disabled={loading}
-                className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-              >
-                <X className="w-4 h-4" />
-                Cancel
-              </button>
+              </div>
             </div>
           )}
-        </div>
+        </Card>
 
-        {/* Account Details (read-only) */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <h2 className="text-lg font-semibold text-slate-900 mb-4">Account Details</h2>
+        {/* Account Details */}
+        <Card>
+          <h3 className="font-semibold text-slate-900 mb-4">Account Details</h3>
           <div className="space-y-4">
-            <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-3">
-              <UserCircle className="w-5 h-5 text-slate-500" />
-              <div>
-                <p className="text-xs text-slate-500">Account Status</p>
-                <p className="text-sm font-medium text-slate-900">{user?.is_active ? 'Active' : 'Inactive'}</p>
-              </div>
+            <div>
+              <p className="text-sm text-slate-500">Account Status</p>
+              <Badge variant={isActive ? 'success' : 'danger'} className="mt-1">
+                {isActive ? 'Active' : 'Inactive'}
+              </Badge>
             </div>
-            <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-3">
-              <Building2 className="w-5 h-5 text-slate-500" />
-              <div>
-                <p className="text-xs text-slate-500">Customer Type</p>
-                <p className="text-sm font-medium text-slate-900">{customer?.customer_type || '—'}</p>
-              </div>
+            <div>
+              <p className="text-sm text-slate-500">User Type</p>
+              <p className="font-medium text-slate-900 capitalize">{userType}</p>
             </div>
-            <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-3">
-              <ShieldCheck className="w-5 h-5 text-slate-500" />
-              <div>
-                <p className="text-xs text-slate-500">Rating</p>
-                <p className="text-sm font-medium text-slate-900 capitalize">{customer?.rating || '—'}</p>
-              </div>
+            <div>
+              <p className="text-sm text-slate-500">Customer Type</p>
+              <p className="font-medium text-slate-900">{customerType}</p>
+            </div>
+            <div>
+              <p className="text-sm text-slate-500">Rating</p>
+              <Badge variant="default" className="mt-1">
+                {rating}
+              </Badge>
             </div>
           </div>
-        </div>
+        </Card>
       </div>
     </div>
   );

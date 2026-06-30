@@ -5,6 +5,40 @@ import { Payment, Invoice, Customer } from '../../types';
 import { Card, Button, Badge, Modal, Input, Select, LoadingSpinner, EmptyState, Table, TableHeader, TableBody, TableRow, TableCell } from '../common/StatusBadge';
 import { Plus, Search, CreditCard, DollarSign, Check, Calendar, Building } from 'lucide-react';
 
+// ---- Helper functions for robust field extraction ----
+const getPaymentNumber = (p: any) => p.payment_number ?? p.paymentNumber ?? 'N/A';
+const getPaymentDate = (p: any) => p.payment_date ?? p.paymentDate ?? null;
+const getCustomerName = (p: any) => {
+  // Try nested customer object first
+  if (p.customer) {
+    if (p.customer.company_name) return p.customer.company_name;
+    if (p.customer.companyName) return p.customer.companyName;
+    if (p.customer.name) return p.customer.name;
+    if (p.customer.full_name) return p.customer.full_name;
+    if (p.customer.fullName) return p.customer.fullName;
+    if (p.customer.business_name) return p.customer.business_name;
+  }
+  // Try direct fields on the payment
+  if (p.customerName) return p.customerName;
+  if (p.customer_name) return p.customer_name;
+  return 'N/A';
+};
+const getPaymentMethod = (p: any) => p.payment_method ?? p.paymentMethod ?? 'N/A';
+const getAmount = (p: any) => p.amount ?? 0;
+const getInvoiceNumber = (p: any) => {
+  if (p.invoice?.invoice_number) return p.invoice.invoice_number;
+  if (p.invoice?.invoiceNumber) return p.invoice.invoiceNumber;
+  if (p.invoiceNumber) return p.invoiceNumber;
+  if (p.invoice_number) return p.invoice_number;
+  return 'N/A';
+};
+const getReferenceNumber = (p: any) => p.reference_number ?? p.referenceNumber ?? 'N/A';
+
+const formatCurrency = (amount: number) => {
+  return `E ${new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(amount || 0)}`;
+};
+const formatDate = (date: any) => date ? new Date(date).toLocaleDateString() : 'Invalid Date';
+
 export default function PaymentManagement() {
   const { user, customer } = useAuth();
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -24,27 +58,83 @@ export default function PaymentManagement() {
         limit: 100,
         customer_id: user?.role === 'customer' && customer ? customer.id : undefined,
       });
-      setPayments(response.data || []);
+
+      console.log('📦 Raw payments response:', response);
+
+      let data = null;
+      const root = response || {};
+      if (Array.isArray(root)) {
+        data = root;
+      } else if (root.data) {
+        if (Array.isArray(root.data)) {
+          data = root.data;
+        } else if (typeof root.data === 'object') {
+          const nested = root.data;
+          const possibleKeys = ['content', 'items', 'results', 'data', 'list', 'records', 'rows', 'payments'];
+          for (const key of possibleKeys) {
+            if (Array.isArray(nested[key])) {
+              data = nested[key];
+              console.log(`✅ Found payments in response.data.${key} (length: ${data.length})`);
+              break;
+            }
+          }
+          if (!data && Array.isArray(nested)) data = nested;
+        }
+      } else {
+        const topKeys = ['content', 'items', 'results', 'data', 'list', 'records', 'rows', 'payments'];
+        for (const key of topKeys) {
+          if (Array.isArray(root[key])) {
+            data = root[key];
+            console.log(`✅ Found payments in response.${key} (length: ${data.length})`);
+            break;
+          }
+        }
+      }
+      if (!data && response?.data?.content) {
+        data = response.data.content;
+        console.log('✅ Fallback: found payments in response.data.content');
+      }
+      if (!data) {
+        console.warn('⚠️ No payments array found – using empty array.');
+        data = [];
+      }
+
+      setPayments(Array.isArray(data) ? data : []);
+      if (data.length > 0) {
+        console.log('🔍 First payment sample:', data[0]);
+        // Debug: show customer object
+        console.log('🔍 Customer object in payment:', data[0].customer);
+      }
     } catch (error) {
       console.error('Error fetching payments:', error);
+      setPayments([]);
     }
     setIsLoading(false);
   };
 
   const filteredPayments = payments.filter((p) => {
-    const matchesSearch =
-      p.payment_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.customer?.company_name.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesSearch;
+    if (!p) return false;
+    const searchLower = searchQuery.toLowerCase().trim();
+    const paymentNumber = getPaymentNumber(p).toLowerCase();
+    const customerName = getCustomerName(p).toLowerCase();
+    return paymentNumber.includes(searchLower) || customerName.includes(searchLower);
   });
 
-  const formatCurrency = (amount: number) => {
-    return `E ${new Intl.NumberFormat('en-US', {
-      maximumFractionDigits: 0,
-    }).format(amount)}`;
-  };
+  const totalReceived = payments.reduce((sum, p) => sum + getAmount(p), 0);
 
-  const totalReceived = payments.reduce((sum, p) => sum + p.amount, 0);
+  const thisMonthPayments = payments.filter(p => {
+    const date = getPaymentDate(p);
+    if (!date) return false;
+    const d = new Date(date);
+    const now = new Date();
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  });
+  const thisMonthTotal = thisMonthPayments.reduce((sum, p) => sum + getAmount(p), 0);
+
+  const bankTransferCount = payments.filter(p => {
+    const method = getPaymentMethod(p);
+    return method === 'bank_transfer' || method === 'bankTransfer';
+  }).length;
 
   if (isLoading) {
     return (
@@ -54,14 +144,16 @@ export default function PaymentManagement() {
     );
   }
 
+  const isCustomerView = user?.role === 'customer';
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Payments</h1>
-          <p className="text-slate-500 mt-1">Track customer payments</p>
+          <p className="text-slate-500 mt-1">{isCustomerView ? 'Your payment history' : 'Track customer payments'}</p>
         </div>
-        {user?.role !== 'customer' && (
+        {!isCustomerView && (
           <Button onClick={() => setShowAddModal(true)}>
             <Plus className="w-4 h-4 mr-2" />
             Record Payment
@@ -84,7 +176,7 @@ export default function PaymentManagement() {
         <Card>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-slate-500">Total Received</p>
+              <p className="text-sm text-slate-500">{isCustomerView ? 'Total Paid' : 'Total Received'}</p>
               <p className="text-2xl font-bold text-emerald-600">{formatCurrency(totalReceived)}</p>
             </div>
             <div className="p-3 bg-emerald-100 rounded-xl">
@@ -96,13 +188,7 @@ export default function PaymentManagement() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-slate-500">This Month</p>
-              <p className="text-2xl font-bold text-blue-600">
-                {formatCurrency(payments.filter(p => {
-                  const date = new Date(p.payment_date);
-                  const now = new Date();
-                  return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
-                }).reduce((sum, p) => sum + p.amount, 0))}
-              </p>
+              <p className="text-2xl font-bold text-blue-600">{formatCurrency(thisMonthTotal)}</p>
             </div>
             <div className="p-3 bg-blue-100 rounded-xl">
               <Calendar className="w-6 h-6 text-blue-600" />
@@ -113,9 +199,7 @@ export default function PaymentManagement() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-slate-500">Bank Transfers</p>
-              <p className="text-2xl font-bold text-slate-900">
-                {payments.filter(p => p.payment_method === 'bank_transfer').length}
-              </p>
+              <p className="text-2xl font-bold text-slate-900">{bankTransferCount}</p>
             </div>
             <div className="p-3 bg-slate-100 rounded-xl">
               <Building className="w-6 h-6 text-slate-600" />
@@ -159,17 +243,17 @@ export default function PaymentManagement() {
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <Check className="w-4 h-4 text-emerald-600" />
-                      <span className="font-medium">{payment.payment_number}</span>
+                      <span className="font-medium">{getPaymentNumber(payment)}</span>
                     </div>
                   </TableCell>
-                  <TableCell>{payment.customer?.company_name}</TableCell>
-                  <TableCell>{payment.invoice?.invoice_number || 'N/A'}</TableCell>
-                  <TableCell>{new Date(payment.payment_date).toLocaleDateString()}</TableCell>
-                  <TableCell className="font-semibold text-emerald-600">{formatCurrency(payment.amount)}</TableCell>
+                  <TableCell>{getCustomerName(payment)}</TableCell>
+                  <TableCell>{getInvoiceNumber(payment)}</TableCell>
+                  <TableCell>{formatDate(getPaymentDate(payment))}</TableCell>
+                  <TableCell className="font-semibold text-emerald-600">{formatCurrency(getAmount(payment))}</TableCell>
                   <TableCell>
-                    <Badge variant="default">{payment.payment_method}</Badge>
+                    <Badge variant="default">{getPaymentMethod(payment)}</Badge>
                   </TableCell>
-                  <TableCell className="text-slate-500">{payment.reference_number || 'N/A'}</TableCell>
+                  <TableCell className="text-slate-500">{getReferenceNumber(payment)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -189,7 +273,7 @@ export default function PaymentManagement() {
   );
 }
 
-// ========== Add Payment Modal (FIXED) ==========
+// ========== Add Payment Modal ==========
 function AddPaymentModal({
   isOpen,
   onClose,
@@ -215,7 +299,6 @@ function AddPaymentModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  // Fetch customers and invoices when modal opens
   useEffect(() => {
     if (isOpen) {
       fetchCustomersAndInvoices();
@@ -227,15 +310,15 @@ function AddPaymentModal({
     setLoadingInvoices(true);
     setError('');
     try {
-      // Fetch customers
       const custRes = await apiService.getCustomers({ page: 1, limit: 200 });
-      const activeCustomers = (custRes.data || []).filter((c: any) => c.is_active !== false);
+      const custData = custRes.data?.data || custRes.data?.content || custRes.data || [];
+      const activeCustomers = (Array.isArray(custData) ? custData : []).filter((c: any) => c.is_active !== false);
       setCustomers(activeCustomers);
       console.log('✅ Customers loaded:', activeCustomers.length);
 
-      // Fetch invoices that are pending or partial
       const invRes = await apiService.getInvoices({ page: 1, limit: 200 });
-      const pendingInvoices = (invRes.data || []).filter((i: any) =>
+      const invData = invRes.data?.data || invRes.data?.content || invRes.data || [];
+      const pendingInvoices = (Array.isArray(invData) ? invData : []).filter((i: any) =>
         ['pending', 'partial'].includes(i.payment_status)
       );
       setInvoices(pendingInvoices);
@@ -249,12 +332,10 @@ function AddPaymentModal({
     }
   };
 
-  // Filter invoices for selected customer
   const filteredInvoices = formData.customer_id
     ? invoices.filter(i => i.customer_id === formData.customer_id)
     : [];
 
-  // When customer changes, reset invoice and amount
   const handleCustomerChange = (customerId: string) => {
     setFormData({
       ...formData,
@@ -298,7 +379,6 @@ function AddPaymentModal({
       });
 
       onSuccess();
-      // Reset form
       setFormData({
         customer_id: '',
         invoice_id: '',
@@ -325,7 +405,6 @@ function AddPaymentModal({
           </div>
         )}
 
-        {/* Customer Select */}
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">
             Customer <span className="text-red-500">*</span>
@@ -342,10 +421,8 @@ function AddPaymentModal({
               <option key={c.id} value={c.id}>{c.company_name}</option>
             ))}
           </select>
-          {loadingCustomers && <span className="text-xs text-slate-400">Loading customers...</span>}
         </div>
 
-        {/* Invoice Select */}
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">
             Apply to Invoice (optional)
@@ -368,7 +445,6 @@ function AddPaymentModal({
           )}
         </div>
 
-        {/* Amount */}
         <Input
           label="Amount"
           type="number"
@@ -378,7 +454,6 @@ function AddPaymentModal({
           required
         />
 
-        {/* Payment Method */}
         <Select
           label="Payment Method"
           value={formData.payment_method}
@@ -421,11 +496,4 @@ function AddPaymentModal({
       </form>
     </Modal>
   );
-}
-
-// Helper function to format currency inside the modal
-function formatCurrency(amount: number) {
-  return `E ${new Intl.NumberFormat('en-US', {
-    maximumFractionDigits: 0,
-  }).format(amount)}`;
 }

@@ -24,17 +24,23 @@ export default function RejectionManagement() {
         limit: 100,
         status: filterStatus || undefined,
       });
-      setRejections(response.data || []);
+      // ✅ Safely extract array from response
+      const data = response.data?.data || response.data?.content || response.data || [];
+      setRejections(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error fetching rejections:', error);
+      setRejections([]);
     }
     setIsLoading(false);
   };
 
+  // ✅ Safe filtering with null checks
   const filteredRejections = rejections.filter((r) => {
-    const matchesSearch =
-      r.rejection_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      r.customer?.company_name.toLowerCase().includes(searchQuery.toLowerCase());
+    if (!r) return false;
+    const searchLower = searchQuery.toLowerCase().trim();
+    const rejectionNumber = (r.rejection_number || '').toLowerCase();
+    const companyName = (r.customer?.company_name || '').toLowerCase();
+    const matchesSearch = rejectionNumber.includes(searchLower) || companyName.includes(searchLower);
     const matchesStatus = !filterStatus || r.status === filterStatus;
     return matchesSearch && matchesStatus;
   });
@@ -104,7 +110,7 @@ export default function RejectionManagement() {
             <div>
               <p className="text-sm text-slate-500">Total Credit Issued</p>
               <p className="text-2xl font-bold text-blue-600">
-                {formatCurrency(rejections.reduce((sum, r) => sum + r.credit_issued, 0))}
+                {formatCurrency(rejections.reduce((sum, r) => sum + (r.credit_issued || 0), 0))}
               </p>
             </div>
             <div className="p-3 bg-blue-100 rounded-xl">
@@ -209,6 +215,7 @@ export default function RejectionManagement() {
   );
 }
 
+// ========== Resolve Rejection Modal (FIXED – uses apiService) ==========
 function ResolveRejectionModal({
   rejection,
   isOpen,
@@ -229,7 +236,7 @@ function ResolveRejectionModal({
 
   useEffect(() => {
     if (rejection) {
-      const creditAmount = (rejection.product?.unit_price || 0) * rejection.quantity;
+      const creditAmount = (rejection.product?.unit_price || 0) * (rejection.quantity || 0);
       setFormData({
         resolution: '',
         credit_issued: creditAmount,
@@ -244,25 +251,20 @@ function ResolveRejectionModal({
     setIsSubmitting(true);
 
     try {
-      const { error } = await supabase
-        .from('material_rejections')
-        .update({
-          status: 'resolved',
-          resolution: formData.resolution,
-          credit_issued: formData.credit_issued,
-          resolution_date: new Date().toISOString(),
-          notes: formData.notes,
-        })
-        .eq('id', rejection.id);
-
-      if (!error) {
-        onSuccess();
-      }
+      // ✅ Use apiService instead of supabase directly
+      await apiService.updateRejection(rejection.id, {
+        status: 'resolved',
+        resolution: formData.resolution,
+        credit_issued: formData.credit_issued,
+        notes: formData.notes,
+      });
+      onSuccess();
     } catch (error) {
       console.error('Error resolving rejection:', error);
+      alert('Failed to resolve rejection. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
-
-    setIsSubmitting(false);
   };
 
   if (!rejection) return null;
@@ -305,7 +307,7 @@ function ResolveRejectionModal({
           type="number"
           value={formData.credit_issued}
           onChange={(e) => setFormData({ ...formData, credit_issued: Number(e.target.value) })}
-          helpText={`${rejection.quantity} x ${formatCurrency(rejection.product?.unit_price || 0)} = ${formatCurrency((rejection.product?.unit_price || 0) * rejection.quantity)}`}
+          helpText={`${rejection.quantity} x ${formatCurrency(rejection.product?.unit_price || 0)} = ${formatCurrency((rejection.product?.unit_price || 0) * (rejection.quantity || 0))}`}
         />
 
         <Input

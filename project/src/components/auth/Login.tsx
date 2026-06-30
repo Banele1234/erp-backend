@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { Button, Input } from '../common/StatusBadge';
 import { Factory, Mail, Lock, Eye, EyeOff } from 'lucide-react';
@@ -10,7 +10,14 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { login } = useAuth();
+  const { login, isAuthenticated } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate('/');
+    }
+  }, [isAuthenticated, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -19,6 +26,7 @@ export default function Login() {
 
     const result = await login(email, password);
     if (result.error) {
+      // Display the actual error message from the backend
       setError(result.error);
     }
     setIsLoading(false);
@@ -103,24 +111,6 @@ export default function Login() {
                 Register here
               </Link>
             </p>
-          </div>
-
-          <div className="mt-8 pt-6 border-t border-slate-200">
-            <p className="text-xs text-slate-500 text-center mb-3">Demo Accounts</p>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <button
-                onClick={() => { setEmail('admin@aal.com'); setPassword('admin123'); }}
-                className="px-3 py-2 bg-slate-100 rounded-lg hover:bg-slate-200 text-slate-700"
-              >
-                Admin
-              </button>
-              <button
-                onClick={() => { setEmail('customer@aal.com'); setPassword('customer123'); }}
-                className="px-3 py-2 bg-slate-100 rounded-lg hover:bg-slate-200 text-slate-700"
-              >
-                Customer
-              </button>
-            </div>
           </div>
         </div>
       </div>

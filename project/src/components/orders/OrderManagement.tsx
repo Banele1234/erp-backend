@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { apiService } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
-import { Order, OrderItem, Customer, Product, Warehouse } from '../../types';
+import { Order, Customer, Product, Warehouse } from '../../types';
 import { Card, Button, Badge, Modal, Input, Select, LoadingSpinner, EmptyState, Table, TableHeader, TableBody, TableRow, TableCell } from '../common/StatusBadge';
 import {
   Plus,
@@ -53,6 +53,7 @@ const statusIcons: Record<string, any> = {
 
 export default function OrderManagement() {
   const { user, customer } = useAuth();
+  const navigate = useNavigate();
   const [orders, setOrders] = useState<Order[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -60,13 +61,87 @@ export default function OrderManagement() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const [searchParams] = useSearchParams();
   const orderIdFromUrl = searchParams.get('orderId');
 
+  const getCustomerName = (order: any): string => {
+    if (order.customer) {
+      if (order.customer.companyName) return order.customer.companyName;
+      if (order.customer.company_name) return order.customer.company_name;
+      if (order.customer.name) return order.customer.name;
+      if (order.customer.fullName) return order.customer.fullName;
+      if (order.customer.full_name) return order.customer.full_name;
+      if (order.customer.business_name) return order.customer.business_name;
+    }
+    if (order.customerName) return order.customerName;
+    if (order.customer_name) return order.customer_name;
+    return 'N/A';
+  };
+
+  const getOrderDate = (order: any): string => {
+    const dateStr = order.order_date || order.orderDate || order.created_at || order.createdAt || null;
+    if (!dateStr) return 'N/A';
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return 'N/A';
+      return d.toLocaleDateString('en-US', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      });
+    } catch {
+      return 'N/A';
+    }
+  };
+
+  const getItemCount = (order: any): string => {
+    if (order.items && Array.isArray(order.items)) {
+      return `${order.items.length} items`;
+    }
+    if (order.itemCount) return `${order.itemCount} items`;
+    if (order.item_count) return `${order.item_count} items`;
+    return '0 items';
+  };
+
+  const formatCurrency = (amount: number) => {
+    return `E ${new Intl.NumberFormat('en-US', {
+      maximumFractionDigits: 0,
+    }).format(amount || 0)}`;
+  };
+
+  const fetchOrders = async () => {
+    setIsLoading(true);
+    try {
+      const params: any = {
+        page: 0, // ✅ 0‑based, matches Spring Data
+        limit: 100,
+        status: filterStatus || undefined,
+      };
+      if (user?.role === 'customer' && customer?.id) {
+        params.customerId = customer.id;
+      }
+
+      const response = await apiService.getOrders(params);
+      console.log('📦 API response from getOrders:', response);
+      const ordersArray = response.data || [];
+      console.log('✅ Extracted orders:', ordersArray);
+      setOrders(ordersArray);
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+      setOrders([]);
+    }
+    setIsLoading(false);
+  };
+
   useEffect(() => {
     fetchOrders();
-  }, [user, customer]);
+  }, [user, customer, filterStatus]);
+
+  useEffect(() => {
+    setFilterStatus('');
+  }, [user]);
 
   useEffect(() => {
     if (orderIdFromUrl) {
@@ -76,51 +151,39 @@ export default function OrderManagement() {
           setSelectedOrder(res.data);
           setShowDetailModal(true);
           window.history.replaceState({}, '', '/orders');
-        } catch (e) {
+        } catch (e: any) {
           console.error('Failed to fetch order from notification:', e);
+          let message = 'Failed to load order. Please try again.';
+          if (e.status === 403) {
+            if (user?.role === 'admin') {
+              message = 'Order details are restricted. As an admin, you can view all orders from the list below.';
+            } else {
+              message = 'You do not have permission to view this order directly. Please contact support.';
+            }
+          }
+          setToast({ message, type: 'error' });
+          window.history.replaceState({}, '', '/orders');
+          if (window.location.pathname !== '/orders') {
+            navigate('/orders');
+          }
         }
       };
       fetchOrderAndOpen();
     }
-  }, [orderIdFromUrl]);
-
-  const fetchOrders = async () => {
-    setIsLoading(true);
-    try {
-      const response = await apiService.getOrders({
-        page: 1,
-        limit: 100,
-        status: filterStatus || undefined,
-        customer_id: user?.role === 'customer' && customer ? customer.id : undefined,
-      });
-      setOrders(response.data || []);
-    } catch (error) {
-      console.error('Error fetching orders:', error);
-    }
-    setIsLoading(false);
-  };
+  }, [orderIdFromUrl, user, navigate]);
 
   const filteredOrders = orders.filter((o) => {
-    const matchesSearch =
-      o.order_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      o.customer?.company_name.toLowerCase().includes(searchQuery.toLowerCase());
+    if (!o) return false;
+    const searchLower = searchQuery.toLowerCase().trim();
+    const orderNumber = (o.order_number || '').toLowerCase();
+    const customerName = getCustomerName(o).toLowerCase();
+    const matchesSearch = orderNumber.includes(searchLower) || customerName.includes(searchLower);
     const matchesStatus = !filterStatus || o.status === filterStatus;
     return matchesSearch && matchesStatus;
   });
 
-  const formatCurrency = (amount: number) => {
-    return `E ${new Intl.NumberFormat('en-US', {
-      maximumFractionDigits: 0,
-    }).format(amount)}`;
-  };
-
-  const formatDate = (date: string) => {
-    return new Date(date).toLocaleDateString('en-US', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    });
-  };
+  const canCreateOrder = user?.role && 
+    ['admin', 'management', 'customer'].includes(user.role.toLowerCase());
 
   if (isLoading) {
     return (
@@ -132,15 +195,27 @@ export default function OrderManagement() {
 
   return (
     <div className="space-y-6">
+      {toast && (
+        <div className={`p-4 rounded-lg text-sm ${
+          toast.type === 'error' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-green-50 text-green-700 border border-green-200'
+        }`}>
+          {toast.message}
+          <button onClick={() => setToast(null)} className="float-right text-sm font-medium">×</button>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Orders</h1>
           <p className="text-slate-500 mt-1">Manage customer orders</p>
         </div>
-        <Button onClick={() => setShowAddModal(true)}>
-          <Plus className="w-4 h-4 mr-2" />
-          New Order
-        </Button>
+        
+        {canCreateOrder && (
+          <Button onClick={() => setShowAddModal(true)}>
+            <Plus className="w-4 h-4 mr-2" />
+            New Order
+          </Button>
+        )}
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -216,48 +291,50 @@ export default function OrderManagement() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredOrders.map((order) => (
-                <TableRow key={order.id}>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
-                        <ShoppingCart className="w-4 h-4 text-blue-600" />
+              {filteredOrders.map((order) => {
+                const customerName = getCustomerName(order);
+                const orderDate = getOrderDate(order);
+                const totalAmount = order.total_amount ?? order.totalAmount ?? 0;
+                const priority = order.priority || 'Normal';
+                const itemCount = getItemCount(order);
+
+                return (
+                  <TableRow key={order.id}>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+                          <ShoppingCart className="w-4 h-4 text-blue-600" />
+                        </div>
+                        <div>
+                          <p className="font-medium text-slate-900">{order.order_number}</p>
+                          <p className="text-xs text-slate-500">Priority: {priority}</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-medium text-slate-900">{order.order_number}</p>
-                        <p className="text-xs text-slate-500">Priority: {order.priority}</p>
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell>{order.customer?.company_name}</TableCell>
-                  <TableCell>{formatDate(order.order_date)}</TableCell>
-                  {/* ✅ FIXED: use itemCount from backend */}
-                  <TableCell>{order.itemCount || 0} items</TableCell>
-                  <TableCell className="font-semibold">{formatCurrency(order.total_amount)}</TableCell>
-                  <TableCell>
-                    <Badge variant={statusColors[order.status] as any}>
-                      {statusLabels[order.status]}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={async () => {
-                        try {
-                          const res = await apiService.getOrder(order.id);
-                          setSelectedOrder(res.data);
+                    </TableCell>
+                    <TableCell>{customerName}</TableCell>
+                    <TableCell>{orderDate}</TableCell>
+                    <TableCell>{itemCount}</TableCell>
+                    <TableCell className="font-semibold">{formatCurrency(totalAmount)}</TableCell>
+                    <TableCell>
+                      <Badge variant={statusColors[order.status] as any}>
+                        {statusLabels[order.status]}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedOrder(order);
                           setShowDetailModal(true);
-                        } catch (e) {
-                          console.error('Failed to fetch order details:', e);
-                        }
-                      }}
-                    >
-                      <Eye className="w-4 h-4" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
+                        }}
+                      >
+                        <Eye className="w-4 h-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         )}
@@ -285,7 +362,9 @@ export default function OrderManagement() {
   );
 }
 
-// ========== Create Order Modal ==========
+// ============================================================
+// CREATE ORDER MODAL – Full implementation
+// ============================================================
 function CreateOrderModal({
   isOpen,
   onClose,
@@ -301,18 +380,22 @@ function CreateOrderModal({
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loadingCustomers, setLoadingCustomers] = useState(false);
+  const [customerDetails, setCustomerDetails] = useState<Customer | null>(null);
+  const [loadingCustomerDetails, setLoadingCustomerDetails] = useState(false);
 
-  // Product search
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [isProductsLoading, setIsProductsLoading] = useState(false);
   const [productSearch, setProductSearch] = useState('');
-  const [productOptions, setProductOptions] = useState<Product[]>([]);
-  const [isProductLoading, setIsProductLoading] = useState(false);
   const [showProductDropdown, setShowProductDropdown] = useState(false);
   const productSearchRef = useRef<HTMLDivElement>(null);
   const productInputRef = useRef<HTMLInputElement>(null);
 
-  // Items store product details directly
   const [items, setItems] = useState<
-    { product_id: string; quantity: number; product_name: string; unit_price: number; gst_percentage: number }[]
+    { 
+      product_id: string; 
+      quantity: number; 
+      product_name: string; 
+    }[]
   >([]);
 
   const [formData, setFormData] = useState({
@@ -325,26 +408,73 @@ function CreateOrderModal({
   const [error, setError] = useState('');
 
   useEffect(() => {
+    if (isOpen && isCustomer && customer?.id) {
+      setFormData(prev => ({ ...prev, customer_id: customer.id }));
+    }
+  }, [isOpen, isCustomer, customer]);
+
+  useEffect(() => {
     if (isOpen) {
       fetchInitialData();
+      fetchAllProducts();
     }
   }, [isOpen]);
 
+  const fetchAllProducts = async () => {
+    if (isProductsLoading) return;
+    setIsProductsLoading(true);
+    try {
+      const response = await apiService.getProducts({ limit: 500 });
+      console.log('📦 Products API raw response:', response);
+      let products = Array.isArray(response) ? response : [];
+      setAllProducts(products);
+    } catch (err) {
+      console.error('Failed to fetch products:', err);
+      setAllProducts([]);
+    } finally {
+      setIsProductsLoading(false);
+    }
+  };
+
   const fetchInitialData = async () => {
     setError('');
+    setLoadingCustomerDetails(false);
     try {
       const whRes = await apiService.getWarehouses();
-      setWarehouses((whRes.data || []).filter((w: any) => w.is_active !== false));
+      let whArray: any[] = [];
+      if (Array.isArray(whRes)) whArray = whRes;
+      else if (whRes?.data && Array.isArray(whRes.data)) whArray = whRes.data;
+      else if (whRes?.data?.data && Array.isArray(whRes.data.data)) whArray = whRes.data.data;
+      const activeWarehouses = whArray.filter((w: any) => {
+        const isActive = w.isActive !== undefined ? w.isActive : w.is_active;
+        return isActive !== false;
+      });
+      setWarehouses(activeWarehouses);
+
+      if (isCustomer && customer?.id) {
+        setLoadingCustomerDetails(true);
+        try {
+          const custRes = await apiService.getCustomer(customer.id);
+          const custData = custRes.data?.data || custRes.data?.content || custRes.data || custRes;
+          if (custData) setCustomerDetails(custData);
+          else setCustomerDetails(customer as Customer);
+        } catch (err) {
+          console.warn('Failed to fetch customer details, using context fallback:', err);
+          setCustomerDetails(customer as Customer);
+        } finally {
+          setLoadingCustomerDetails(false);
+        }
+        if (!formData.customer_id) {
+          setFormData(prev => ({ ...prev, customer_id: customer.id }));
+        }
+      }
 
       if (!isCustomer) {
         setLoadingCustomers(true);
         const custRes = await apiService.getCustomers({ page: 1, limit: 200 });
-        setCustomers(custRes.data || []);
+        const custData = custRes.data?.data || custRes.data?.content || custRes.data || [];
+        setCustomers(Array.isArray(custData) ? custData : []);
         setLoadingCustomers(false);
-      }
-
-      if (isCustomer && customer) {
-        setFormData(prev => ({ ...prev, customer_id: customer.id }));
       }
     } catch (err: any) {
       console.error('❌ Error loading data:', err);
@@ -352,28 +482,14 @@ function CreateOrderModal({
     }
   };
 
-  // Debounced product search – exclude already added products
-  useEffect(() => {
-    if (!productSearch.trim()) {
-      setProductOptions([]);
-      return;
-    }
-    const timer = setTimeout(async () => {
-      setIsProductLoading(true);
-      try {
-        const res = await apiService.getProducts({ search: productSearch, limit: 50 });
-        const addedIds = items.map(i => i.product_id);
-        const filtered = (res.data || []).filter(p => !addedIds.includes(p.id));
-        setProductOptions(filtered);
-      } catch (err) {
-        console.error('Product search error:', err);
-        setProductOptions([]);
-      } finally {
-        setIsProductLoading(false);
-      }
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [productSearch, items]);
+  const filteredProducts = allProducts.filter(p => {
+    const searchLower = productSearch.toLowerCase().trim();
+    if (!searchLower) return false;
+    const nameMatch = (p.name || '').toLowerCase().includes(searchLower);
+    const codeMatch = (p.product_code || '').toLowerCase().includes(searchLower);
+    const isAlreadyAdded = items.some(i => i.product_id === p.id);
+    return (nameMatch || codeMatch) && !isAlreadyAdded;
+  });
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -385,9 +501,12 @@ function CreateOrderModal({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const getProductPrice = (product: Product): number => {
+    return product?.unit_price ?? product?.unitPrice ?? product?.price ?? 0;
+  };
+
   const handleSelectProduct = (product: Product) => {
-    const existing = items.find(i => i.product_id === product.id);
-    if (existing) {
+    if (items.some(i => i.product_id === product.id)) {
       setError('Product already added.');
       return;
     }
@@ -397,12 +516,9 @@ function CreateOrderModal({
         product_id: product.id,
         quantity: 1,
         product_name: product.name,
-        unit_price: product.unit_price || 0,
-        gst_percentage: product.gst_percentage || 18,
       },
     ]);
     setProductSearch('');
-    setProductOptions([]);
     setShowProductDropdown(false);
     setError('');
     productInputRef.current?.focus();
@@ -437,25 +553,32 @@ function CreateOrderModal({
 
     try {
       const orderItems = items.map(item => ({
-        product_id: item.product_id,
+        productId: item.product_id,
         quantity: item.quantity,
       }));
 
-      await apiService.createOrder({
-        customer_id: formData.customer_id,
-        warehouse_id: formData.warehouse_id,
-        required_date: formData.required_date || undefined,
-        notes: formData.notes,
+      const orderData = {
+        customerId: formData.customer_id,
+        warehouseId: formData.warehouse_id,
+        requiredDate: formData.required_date || undefined,
+        notes: formData.notes || '',
         items: orderItems,
-      });
+      };
+
+      console.log('📦 Sending order data:', orderData);
+
+      await apiService.createOrder(orderData);
 
       onSuccess();
       setItems([]);
       setFormData({ customer_id: '', warehouse_id: '', notes: '', required_date: '' });
       setProductSearch('');
+      setCustomerDetails(null);
+      setAllProducts([]);
     } catch (error: any) {
       console.error('Error creating order:', error);
-      setError(error.message || 'Failed to create order. Please try again.');
+      const msg = error.response?.data?.error || 'Failed to create order. Please try again.';
+      setError(msg);
     } finally {
       setIsSubmitting(false);
     }
@@ -463,8 +586,24 @@ function CreateOrderModal({
 
   const addItem = () => {
     setProductSearch('');
+    if (allProducts.length === 0) fetchAllProducts();
     setShowProductDropdown(true);
     setTimeout(() => productInputRef.current?.focus(), 100);
+  };
+
+  const getCustomerDisplayName = (): string => {
+    if (loadingCustomerDetails) return 'Loading...';
+    const cust = customerDetails || customer;
+    if (cust) {
+      return cust.companyName || cust.company_name || cust.name || cust.fullName || cust.full_name || 'Your Company';
+    }
+    return 'Your Company';
+  };
+
+  const formatCurrency = (amount: number) => {
+    return `E ${new Intl.NumberFormat('en-US', {
+      maximumFractionDigits: 0,
+    }).format(amount || 0)}`;
   };
 
   return (
@@ -482,12 +621,15 @@ function CreateOrderModal({
               Customer <span className="text-red-500">*</span>
             </label>
             {isCustomer ? (
-              <input
-                type="text"
-                value={customer?.company_name || 'Your Company'}
-                disabled
-                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-slate-600"
-              />
+              <>
+                <input
+                  type="text"
+                  value={getCustomerDisplayName()}
+                  disabled
+                  className="w-full rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-slate-600"
+                />
+                <input type="hidden" name="customer_id" value={formData.customer_id} />
+              </>
             ) : (
               <select
                 value={formData.customer_id}
@@ -498,12 +640,11 @@ function CreateOrderModal({
               >
                 <option value="">Select customer</option>
                 {customers.map((c) => (
-                  <option key={c.id} value={c.id}>{c.company_name}</option>
+                  <option key={c.id} value={c.id}>
+                    {c.companyName || c.company_name || c.name || c.fullName || c.full_name || 'N/A'}
+                  </option>
                 ))}
               </select>
-            )}
-            {isCustomer && (
-              <input type="hidden" name="customer_id" value={customer?.id || ''} />
             )}
           </div>
 
@@ -518,8 +659,13 @@ function CreateOrderModal({
               required
             >
               <option value="">Select a warehouse</option>
+              {warehouses.length === 0 && (
+                <option value="" disabled>No warehouses available</option>
+              )}
               {warehouses.map((w) => (
-                <option key={w.id} value={w.id}>{w.name}</option>
+                <option key={w.id} value={w.id}>
+                  {w.name || w.warehouse_name || w.warehouseName || 'Unnamed Warehouse'}
+                </option>
               ))}
             </select>
           </div>
@@ -547,34 +693,48 @@ function CreateOrderModal({
               type="text"
               value={productSearch}
               onChange={(e) => {
-                setProductSearch(e.target.value);
-                setShowProductDropdown(true);
+                const value = e.target.value;
+                setProductSearch(value);
+                if (value.trim() !== '') {
+                  if (allProducts.length === 0) fetchAllProducts();
+                  setShowProductDropdown(true);
+                } else {
+                  setShowProductDropdown(false);
+                }
               }}
-              onFocus={() => setShowProductDropdown(true)}
+              onFocus={() => {
+                if (allProducts.length === 0) fetchAllProducts();
+                if (productSearch.trim() !== '') setShowProductDropdown(true);
+              }}
               placeholder="Search product by name or code..."
               className="w-full rounded-lg border border-slate-300 px-4 py-2.5 pr-10 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             {showProductDropdown && productSearch.trim() !== '' && (
               <div className="absolute z-10 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                {isProductLoading ? (
-                  <div className="p-4 text-center text-slate-500">Loading...</div>
-                ) : productOptions.length === 0 ? (
-                  <div className="p-4 text-center text-slate-500">No products found</div>
+                {isProductsLoading ? (
+                  <div className="p-4 text-center text-slate-500">Loading products...</div>
+                ) : filteredProducts.length === 0 ? (
+                  <div className="p-4 text-center text-slate-500">
+                    {productSearch.trim() ? 'No products found' : 'Type to search'}
+                  </div>
                 ) : (
-                  productOptions.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => handleSelectProduct(p)}
-                      className="w-full px-4 py-2 text-left hover:bg-slate-50 transition-colors flex items-center gap-2 border-b border-slate-100 last:border-0"
-                    >
-                      <Package className="w-4 h-4 text-slate-400" />
-                      <div>
-                        <p className="font-medium text-slate-900">{p.name}</p>
-                        <p className="text-xs text-slate-500">{p.product_code}</p>
-                      </div>
-                    </button>
-                  ))
+                  filteredProducts.map((p) => {
+                    const price = getProductPrice(p);
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => handleSelectProduct(p)}
+                        className="w-full px-4 py-2 text-left hover:bg-slate-50 transition-colors flex items-center gap-2 border-b border-slate-100 last:border-0"
+                      >
+                        <Package className="w-4 h-4 text-slate-400" />
+                        <div>
+                          <p className="font-medium text-slate-900">{p.name}</p>
+                          <p className="text-xs text-slate-500">{p.product_code} – {formatCurrency(price)}</p>
+                        </div>
+                      </button>
+                    );
+                  })
                 )}
               </div>
             )}
@@ -587,11 +747,14 @@ function CreateOrderModal({
           ) : (
             <div className="space-y-2">
               {items.map((item, index) => {
-                const lineTotal = (item.unit_price || 0) * item.quantity;
+                const product = allProducts.find(p => p.id === item.product_id);
+                const price = product ? getProductPrice(product) : 0;
+                const lineTotal = price * item.quantity;
                 return (
                   <div key={index} className="flex items-center gap-4 p-3 bg-slate-50 rounded-lg">
                     <div className="flex-1">
                       <p className="font-medium text-slate-900">{item.product_name || 'Unknown'}</p>
+                      <p className="text-xs text-slate-500">Unit Price: {formatCurrency(price)}</p>
                     </div>
                     <div className="w-24">
                       <Input
@@ -603,9 +766,7 @@ function CreateOrderModal({
                     </div>
                     <div className="w-32 text-right">
                       <p className="text-sm text-slate-500">Line Total</p>
-                      <p className="font-semibold">
-                        {`E ${new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(lineTotal)}`}
-                      </p>
+                      <p className="font-semibold">{formatCurrency(lineTotal)}</p>
                     </div>
                     <Button type="button" variant="ghost" size="sm" onClick={() => removeItem(index)}>
                       <X className="w-4 h-4 text-red-500" />
@@ -637,7 +798,9 @@ function CreateOrderModal({
   );
 }
 
-// ========== Order Detail Modal ==========
+// ============================================================
+// ORDER DETAIL MODAL (unchanged – already correct)
+// ============================================================
 function OrderDetailModal({
   order,
   isOpen,
@@ -659,7 +822,7 @@ function OrderDetailModal({
   const formatCurrency = (amount: number) => {
     return `E ${new Intl.NumberFormat('en-US', {
       maximumFractionDigits: 0,
-    }).format(amount)}`;
+    }).format(amount || 0)}`;
   };
 
   const updateStatus = async (newStatus: string) => {
@@ -680,13 +843,23 @@ function OrderDetailModal({
   ];
   const currentStepIndex = statusSteps.indexOf(order.status);
 
+  const getCustomerName = (ord: any): string => {
+    if (ord.customer?.companyName) return ord.customer.companyName;
+    if (ord.customer?.company_name) return ord.customer.company_name;
+    if (ord.customer?.name) return ord.customer.name;
+    if (ord.customer?.fullName) return ord.customer.fullName;
+    if (ord.customer?.full_name) return ord.customer.full_name;
+    if (ord.customerName) return ord.customerName;
+    return 'N/A';
+  };
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Order Details" size="xl">
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-semibold text-slate-900">{order.order_number}</h3>
-            <p className="text-slate-500">{order.customer?.company_name}</p>
+            <h3 className="text-lg font-semibold text-slate-900">{order.order_number || order.orderNumber}</h3>
+            <p className="text-slate-500">{getCustomerName(order)}</p>
           </div>
           <Badge variant={statusColors[order.status] as any} size="lg">
             {statusLabels[order.status]}
@@ -718,11 +891,19 @@ function OrderDetailModal({
         <div className="grid grid-cols-3 gap-4">
           <Card>
             <p className="text-sm text-slate-500">Order Date</p>
-            <p className="font-medium">{new Date(order.order_date).toLocaleDateString()}</p>
+            <p className="font-medium">
+              {order.order_date || order.orderDate ?
+                new Date(order.order_date || order.orderDate).toLocaleDateString() :
+                'N/A'}
+            </p>
           </Card>
           <Card>
             <p className="text-sm text-slate-500">Required Date</p>
-            <p className="font-medium">{order.required_date ? new Date(order.required_date).toLocaleDateString() : 'N/A'}</p>
+            <p className="font-medium">
+              {order.required_date || order.requiredDate ?
+                new Date(order.required_date || order.requiredDate).toLocaleDateString() :
+                'N/A'}
+            </p>
           </Card>
           <Card>
             <p className="text-sm text-slate-500">Warehouse</p>
@@ -743,20 +924,34 @@ function OrderDetailModal({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {order.items?.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell>
-                    <div>
-                      <p className="font-medium">{item.product?.name}</p>
-                      <p className="text-sm text-slate-500">{item.product?.product_code}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>{item.quantity}</TableCell>
-                  <TableCell>{formatCurrency(item.unit_price)}</TableCell>
-                  <TableCell>{item.tax_percentage}%</TableCell>
-                  <TableCell className="font-semibold">{formatCurrency(item.line_total)}</TableCell>
+              {order.items?.map((item: any) => {
+                const productName = item.product?.name || item.product_name || 'Unknown';
+                const productCode = item.product?.productCode || item.product?.product_code || item.product_code || 'N/A';
+                const quantity = item.quantity ?? 0;
+                const unitPrice = item.unitPrice ?? item.unit_price ?? 0;
+                const taxPercent = item.taxPercentage ?? item.tax_percentage ?? 0;
+                const lineTotal = item.lineTotal ?? item.line_total ?? 0;
+
+                return (
+                  <TableRow key={item.id}>
+                    <TableCell>
+                      <div>
+                        <p className="font-medium">{productName}</p>
+                        <p className="text-sm text-slate-500">{productCode}</p>
+                      </div>
+                    </TableCell>
+                    <TableCell>{quantity}</TableCell>
+                    <TableCell>{formatCurrency(unitPrice)}</TableCell>
+                    <TableCell>{taxPercent}%</TableCell>
+                    <TableCell className="font-semibold">{formatCurrency(lineTotal)}</TableCell>
+                  </TableRow>
+                );
+              })}
+              {(!order.items || order.items.length === 0) && (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center text-slate-500">No items found</TableCell>
                 </TableRow>
-              ))}
+              )}
             </TableBody>
           </Table>
         </div>
@@ -764,7 +959,9 @@ function OrderDetailModal({
         <div className="border-t pt-4 flex justify-between items-center">
           <div>
             <p className="text-sm text-slate-500">Order Total</p>
-            <p className="text-2xl font-bold text-slate-900">{formatCurrency(order.total_amount)}</p>
+            <p className="text-2xl font-bold text-slate-900">
+              {formatCurrency(order.total_amount ?? order.totalAmount ?? 0)}
+            </p>
           </div>
           <div className="flex gap-2">
             {(order.status === 'pending' || order.status === 'confirmed') && (

@@ -22,17 +22,23 @@ export default function ProductionTrackingManagement() {
         limit: 100,
         status: filterStatus || undefined,
       });
-      setProductions(response.data || []);
+      // ✅ Safely extract array
+      const data = response.data?.data || response.data?.content || response.data || [];
+      setProductions(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error fetching productions:', error);
+      setProductions([]);
     }
     setIsLoading(false);
   };
 
+  // ✅ Safe filtering with null checks
   const filteredProductions = productions.filter((p) => {
-    const matchesSearch =
-      p.batch_number?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.product?.name.toLowerCase().includes(searchQuery.toLowerCase());
+    if (!p) return false;
+    const searchLower = searchQuery.toLowerCase().trim();
+    const batchNumber = (p.batch_number || '').toLowerCase();
+    const productName = (p.product?.name || '').toLowerCase();
+    const matchesSearch = batchNumber.includes(searchLower) || productName.includes(searchLower);
     const matchesStatus = !filterStatus || p.status === filterStatus;
     return matchesSearch && matchesStatus;
   });
@@ -96,7 +102,7 @@ export default function ProductionTrackingManagement() {
             <div>
               <p className="text-sm text-slate-500">Total Output</p>
               <p className="text-2xl font-bold text-blue-600">
-                {productions.reduce((sum, p) => sum + p.produced_quantity, 0).toLocaleString()}
+                {productions.reduce((sum, p) => sum + (p.produced_quantity || 0), 0).toLocaleString()}
               </p>
             </div>
             <div className="p-3 bg-blue-100 rounded-xl">
