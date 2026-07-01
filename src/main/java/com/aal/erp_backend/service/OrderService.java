@@ -256,7 +256,8 @@ public class OrderService {
         order.setUpdatedAt(Instant.now());
         order = orderRepository.save(order);
 
-        List<User> admins = userRepository.findByRole("admin");
+        // ✅ FIX: Use case‑insensitive role lookup
+        List<User> admins = userRepository.findByRoleIgnoreCase("admin");
         for (User admin : admins) {
             createNotification(
                     admin.getId(),
