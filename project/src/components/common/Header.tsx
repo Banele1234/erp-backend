@@ -9,32 +9,64 @@ export default function Header() {
   const [showDropdown, setShowDropdown] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  useEffect(() => {
-    if (!user) return;
+  const fetchUnread = async () => {
+    if (!user) {
+      console.log('🔔 Header: No user, skipping fetch');
+      return;
+    }
+    try {
+      console.log('🔔 Header: Fetching unread count...');
+      const res = await apiService.getNotifications({ unread_only: true });
+      console.log('🔔 Header: Raw response:', res);
 
-    const fetchUnread = async () => {
-      try {
-        const res = await apiService.getNotifications(true);
-        setUnreadCount(res.data?.length || 0);
-      } catch (e) {
-        console.error('Failed to fetch unread count:', e);
+      // ✅ Extract notifications from paginated or array response
+      let data: any[] = [];
+      if (res?.content && Array.isArray(res.content)) {
+        data = res.content;
+      } else if (res?.data?.content && Array.isArray(res.data.content)) {
+        data = res.data.content;
+      } else if (res?.data && Array.isArray(res.data)) {
+        data = res.data;
+      } else if (Array.isArray(res)) {
+        data = res;
       }
-    };
 
+      // ✅ Client‑side filter: only count unread notifications
+      const unread = data.filter(n => {
+        const isRead = n.isRead ?? n.is_read ?? true;
+        return !isRead;
+      });
+
+      const count = unread.length;
+      console.log('🔔 Header: Unread count =', count);
+      setUnreadCount(count);
+    } catch (e) {
+      console.error('Header: Failed to fetch unread count:', e);
+    }
+  };
+
+  useEffect(() => {
     fetchUnread();
 
-    // ✅ Listen for "notification-read" custom event
     const handleNotificationRead = () => {
+      console.log('🔔 Header: notification-read event received');
       fetchUnread();
     };
     window.addEventListener('notification-read', handleNotificationRead);
 
-    // Refresh every 30 seconds as a fallback
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchUnread();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     const interval = setInterval(fetchUnread, 30000);
 
     return () => {
       clearInterval(interval);
       window.removeEventListener('notification-read', handleNotificationRead);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [user]);
 

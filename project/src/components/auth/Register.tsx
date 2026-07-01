@@ -72,7 +72,9 @@ export default function Register() {
         gst_number: formData.gst_number,
       });
 
-      // Check if email confirmation is required
+      console.log('📦 Registration response:', response);
+
+      // Check if email confirmation is required (unlikely, but keep)
       if (response.requiresConfirmation) {
         setConfirmEmail(response.email || formData.email);
         setShowConfirmation(true);
@@ -80,9 +82,10 @@ export default function Register() {
         return;
       }
 
-      // If token is returned, user is confirmed
-      if (response.data?.token) {
-        apiService.setToken(response.data.token);
+      // ✅ Extract token – try root first, then nested
+      const token = response.token || response.data?.token;
+      if (token) {
+        apiService.setToken(token);
         navigate('/');
       } else {
         setError('Registration failed – no token returned');

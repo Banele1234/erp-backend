@@ -16,7 +16,8 @@ import {
   Filter,
   CheckCircle,
   AlertCircle,
-  Trash2, // <-- import delete icon
+  Trash2,
+  RefreshCw,
 } from 'lucide-react';
 
 const customerTypeLabels: Record<string, string> = {
@@ -45,40 +46,91 @@ export default function CustomerList() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [paginationInfo, setPaginationInfo] = useState<any>(null);
 
   useEffect(() => {
     fetchCustomers();
   }, []);
 
-  const fetchCustomers = async () => {
+  const fetchCustomers = async (resetFilters?: boolean) => {
     setIsLoading(true);
     try {
-      const response = await apiService.getCustomers({
+      const params: any = {
         page: 1,
         limit: 100,
-        search: searchQuery || undefined,
-        type: filterType || undefined,
-      });
-      setCustomers(response.data || []);
+      };
+
+      if (!resetFilters) {
+        if (searchQuery && searchQuery.trim()) {
+          params.search = searchQuery.trim();
+        }
+        if (filterType) {
+          params.type = filterType;
+        }
+      }
+
+      console.log('📤 Fetching customers with params:', params);
+
+      const response = await apiService.getCustomers(params);
+      console.log('📦 Raw customers response:', response);
+
+      setPaginationInfo(response?.pagination || null);
+
+      const data = response?.data || [];
+      if (Array.isArray(data)) {
+        setCustomers(data);
+        // ✅ Debug: log first customer to see field names
+        if (data.length > 0) {
+          console.log('🔍 First customer sample:', data[0]);
+          console.log('🔍 Customer type field:', data[0].customer_type, data[0].customerType, data[0].type);
+        }
+      } else {
+        console.error('❌ Response data is not an array:', data);
+        setCustomers([]);
+      }
     } catch (error) {
       console.error('Error fetching customers:', error);
+      setCustomers([]);
     }
     setIsLoading(false);
   };
 
+  const handleRefresh = () => {
+    fetchCustomers(false);
+  };
+
+  const handleResetFilters = () => {
+    setSearchQuery('');
+    setFilterType('');
+    fetchCustomers(true);
+  };
+
+  // ✅ Helper to get customer type from any field name
+  const getCustomerType = (c: any): string => {
+    return c.customer_type || c.customerType || c.type || '';
+  };
+
+  // ✅ Real‑time filtering with robust type extraction
   const filteredCustomers = customers.filter((c) => {
+    if (!c) return false;
+    const searchLower = searchQuery.toLowerCase().trim();
+    const companyName = (c.company_name || c.companyName || '').toLowerCase();
+    const customerCode = (c.customer_code || c.customerCode || '').toLowerCase();
+    const contactPerson = (c.contact_person || c.contactPerson || '').toLowerCase();
     const matchesSearch =
-      c.company_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.customer_code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.contact_person?.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesFilter = !filterType || c.customer_type === filterType;
+      !searchLower ||
+      companyName.includes(searchLower) ||
+      customerCode.includes(searchLower) ||
+      contactPerson.includes(searchLower);
+    const customerType = getCustomerType(c);
+    const matchesFilter = !filterType || customerType === filterType;
     return matchesSearch && matchesFilter;
   });
 
   const formatCurrency = (amount: number) => {
     return `E ${new Intl.NumberFormat('en-US', {
       maximumFractionDigits: 0,
-    }).format(amount)}`;
+    }).format(amount || 0)}`;
   };
 
   const getUtilizationPercent = (customer: Customer) => {
@@ -94,6 +146,8 @@ export default function CustomerList() {
     );
   }
 
+  const totalElements = paginationInfo?.totalElements ?? customers.length;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -101,14 +155,32 @@ export default function CustomerList() {
           <h1 className="text-2xl font-bold text-slate-900">Customers</h1>
           <p className="text-slate-500 mt-1">Manage your customer base</p>
         </div>
-        <Button onClick={() => setShowAddModal(true)}>
-          <Plus className="w-4 h-4 mr-2" />
-          Add Customer
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={handleRefresh} className="flex items-center gap-2">
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </Button>
+          <Button onClick={() => setShowAddModal(true)}>
+            <Plus className="w-4 h-4 mr-2" />
+            Add Customer
+          </Button>
+        </div>
       </div>
+
+      {paginationInfo && (
+        <div className="text-sm text-slate-500 bg-slate-50 p-2 rounded">
+          Total customers in database: <strong>{paginationInfo.totalElements}</strong>
+          {paginationInfo.totalElements > 0 && customers.length === 0 && (
+            <span className="text-amber-600 ml-2">
+              (But none loaded – check your search/filters)
+            </span>
+          )}
+        </div>
+      )}
 
       <Card>
         <div className="flex flex-col md:flex-row gap-4 mb-6">
+          {/* Search input */}
           <div className="flex-1 relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
             <input
@@ -119,21 +191,32 @@ export default function CustomerList() {
               className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
-          <Select
+
+          {/* ✅ Native select for type filter */}
+          <select
             value={filterType}
             onChange={(e) => setFilterType(e.target.value)}
-            options={[
-              { value: '', label: 'All Types' },
-              { value: 'oem', label: 'OEM Customers' },
-              { value: 'regular_dealer', label: 'Regular Dealers' },
-              { value: 'exclusive_dealer', label: 'Exclusive Dealers' },
-            ]}
-            className="w-48"
-          />
+            className="w-48 rounded-lg border border-slate-300 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+          >
+            <option value="">All Types</option>
+            <option value="oem">OEM Customers</option>
+            <option value="regular_dealer">Regular Dealers</option>
+            <option value="exclusive_dealer">Exclusive Dealers</option>
+          </select>
+
+          <Button variant="outline" onClick={handleResetFilters} className="whitespace-nowrap">
+            Reset Filters
+          </Button>
         </div>
 
         {filteredCustomers.length === 0 ? (
-          <EmptyState message="No customers found" />
+          <EmptyState
+            message={
+              totalElements > 0 && customers.length === 0
+                ? "Your search or filter is too restrictive – try resetting filters."
+                : "No customers found."
+            }
+          />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredCustomers.map((customer) => (
@@ -151,8 +234,8 @@ export default function CustomerList() {
                       <Building className="w-6 h-6 text-white" />
                     </div>
                     <div>
-                      <h3 className="font-semibold text-slate-900">{customer.company_name}</h3>
-                      <p className="text-sm text-slate-500">{customer.customer_code}</p>
+                      <h3 className="font-semibold text-slate-900">{customer.company_name || customer.companyName}</h3>
+                      <p className="text-sm text-slate-500">{customer.customer_code || customer.customerCode}</p>
                     </div>
                   </div>
                   <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${ratingColors[customer.rating]}`}>
@@ -204,22 +287,19 @@ export default function CustomerList() {
           setShowModal(false);
           setSelectedCustomer(null);
         }}
-        onUpdate={fetchCustomers}
+        onUpdate={handleRefresh}
       />
 
       <AddCustomerModal
         isOpen={showAddModal}
         onClose={() => setShowAddModal(false)}
-        onSuccess={() => {
-          setShowAddModal(false);
-          fetchCustomers();
-        }}
+        onSuccess={handleRefresh}
       />
     </div>
   );
 }
 
-// ========== Customer Details Modal (with Delete) ==========
+// ========== Customer Details Modal ==========
 function CustomerDetailsModal({
   customer,
   isOpen,
@@ -255,7 +335,6 @@ function CustomerDetailsModal({
 
   const handleDelete = async () => {
     if (!customer) return;
-    // Confirm deletion
     if (!window.confirm(`Are you sure you want to delete customer "${customer.company_name}"? This action cannot be undone.`)) {
       return;
     }
@@ -263,8 +342,8 @@ function CustomerDetailsModal({
     setIsDeleting(true);
     try {
       await apiService.deleteCustomer(customer.id);
-      onUpdate(); // refresh the list
-      onClose(); // close the modal
+      onUpdate();
+      onClose();
     } catch (error) {
       console.error('Error deleting customer:', error);
       alert('Failed to delete customer. Please try again.');
@@ -276,7 +355,7 @@ function CustomerDetailsModal({
   const formatCurrency = (amount: number) => {
     return `E ${new Intl.NumberFormat('en-US', {
       maximumFractionDigits: 0,
-    }).format(amount)}`;
+    }).format(amount || 0)}`;
   };
 
   if (!customer) return null;
@@ -391,7 +470,7 @@ function CustomerDetailsModal({
   );
 }
 
-// ========== Add Customer Modal (unchanged) ==========
+// ========== Add Customer Modal ==========
 function AddCustomerModal({
   isOpen,
   onClose,
@@ -403,6 +482,7 @@ function AddCustomerModal({
 }) {
   const [formData, setFormData] = useState({
     email: '',
+    password: '',
     company_name: '',
     contact_person: '',
     phone: '',
@@ -417,27 +497,57 @@ function AddCustomerModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsSubmitting(true);
     setErrorMessage('');
     setSuccessMessage('');
 
-    try {
-      const response = await apiService.createCustomer({
-        email: formData.email,
-        company_name: formData.company_name,
-        contact_person: formData.contact_person,
-        phone: formData.phone,
-        address: formData.address,
-        city: formData.city,
-        customer_type: formData.customer_type,
-        credit_limit: formData.credit_limit,
-      });
+    if (!formData.company_name.trim()) {
+      setErrorMessage('Company Name is required.');
+      return;
+    }
+    if (!formData.contact_person.trim()) {
+      setErrorMessage('Contact Person is required.');
+      return;
+    }
+    if (!formData.email.trim()) {
+      setErrorMessage('Email is required.');
+      return;
+    }
+    if (!formData.phone.trim()) {
+      setErrorMessage('Phone is required.');
+      return;
+    }
 
-      setSuccessMessage('Customer created successfully! An invite email has been sent.');
+    setIsSubmitting(true);
+
+    try {
+      const payload = {
+        email: formData.email.trim(),
+        password: formData.password.trim() || undefined,
+        companyName: formData.company_name.trim(),
+        contactPerson: formData.contact_person.trim(),
+        phone: formData.phone.trim(),
+        address: formData.address.trim(),
+        city: formData.city.trim(),
+        customerType: formData.customer_type,
+        creditLimit: formData.credit_limit,
+      };
+
+      console.log('📤 Sending payload:', payload);
+
+      await apiService.createCustomer(payload);
+
+      setSuccessMessage(
+        formData.password
+          ? '✅ Customer created! They can now log in with the provided password.'
+          : '✅ Customer created! An invite email with login instructions has been sent.'
+      );
+
       setTimeout(() => {
         onSuccess();
+        onClose();
         setFormData({
           email: '',
+          password: '',
           company_name: '',
           contact_person: '',
           phone: '',
@@ -451,9 +561,9 @@ function AddCustomerModal({
       const message = error?.response?.data?.error || error?.message || 'Failed to create customer. Please try again.';
       setErrorMessage(message);
       console.error('Error adding customer:', error);
+    } finally {
+      setIsSubmitting(false);
     }
-
-    setIsSubmitting(false);
   };
 
   return (
@@ -494,17 +604,24 @@ function AddCustomerModal({
             value={formData.email}
             onChange={(e) => setFormData({ ...formData, email: e.target.value })}
             required
-            helper="An invite email will be sent to this address"
+            helper="This will be the login username"
           />
+          <Input
+            label="Password"
+            type="password"
+            value={formData.password}
+            onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+            helper="Leave blank to auto‑generate and email"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
           <Input
             label="Phone"
             value={formData.phone}
             onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
             required
           />
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
           <Select
             label="Customer Type"
             value={formData.customer_type}
@@ -515,6 +632,9 @@ function AddCustomerModal({
               { value: 'exclusive_dealer', label: 'Exclusive Dealer' },
             ]}
           />
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
           <Input
             label="Credit Limit"
             type="number"

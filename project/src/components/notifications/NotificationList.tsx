@@ -6,6 +6,11 @@ import { Notification } from '../../types';
 import { Card, Button, Badge, LoadingSpinner, EmptyState } from '../common/StatusBadge';
 import { Bell, Check, Trash2, ShoppingCart, Package, AlertTriangle, DollarSign, Info, FileText } from 'lucide-react';
 
+// Helper to check if notification is read (handles both field names)
+const isNotificationRead = (notification: Notification) => {
+  return notification.is_read ?? notification.isRead ?? false;
+};
+
 export default function NotificationList() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -20,50 +25,130 @@ export default function NotificationList() {
     if (!user) return;
     setIsLoading(true);
     try {
-      const response = await apiService.getNotifications(false);
-      setNotifications(response.data || []);
+      const response = await apiService.getNotifications({ unread_only: false });
+      console.log('📦 Notifications response:', response);
+
+      // ✅ Handle paginated response (content array) and other formats
+      let data: any[] = [];
+      if (response?.content && Array.isArray(response.content)) {
+        data = response.content;
+      } else if (response?.data?.content && Array.isArray(response.data.content)) {
+        data = response.data.content;
+      } else if (response?.data && Array.isArray(response.data)) {
+        data = response.data;
+      } else if (Array.isArray(response)) {
+        data = response;
+      }
+
+      setNotifications(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error fetching notifications:', error);
+      setNotifications([]);
     }
     setIsLoading(false);
   };
 
   const handleNotificationClick = async (notification: Notification) => {
-    if (!notification.is_read) {
-      await apiService.markNotificationRead(notification.id);
-      await fetchNotifications();
-      window.dispatchEvent(new CustomEvent('notification-read'));
+    console.log('🔔 Notification clicked:', notification);
+
+    const refId = notification.reference_id || notification.referenceId || notification.referenceID;
+    const type = notification.type || notification.notificationType;
+
+    // Check if already read using the helper
+    const isRead = isNotificationRead(notification);
+
+    if (!isRead) {
+      // Optimistically mark as read
+      setNotifications(prev =>
+        prev.map(n =>
+          n.id === notification.id ? { ...n, is_read: true, isRead: true } : n
+        )
+      );
+
+      try {
+        await apiService.markNotificationRead(notification.id);
+        await fetchNotifications();
+        // ✅ Dispatch event after successful fetch to update sidebar/header
+        window.dispatchEvent(new CustomEvent('notification-read'));
+      } catch (error) {
+        console.error('Error marking notification read:', error);
+        await fetchNotifications();
+        // Optionally dispatch event even on error (to refresh the badge)
+        // window.dispatchEvent(new CustomEvent('notification-read'));
+      }
     }
 
-    if (notification.type === 'order' && notification.reference_id) {
-      navigate(`/orders?orderId=${notification.reference_id}`);
-    } else if (notification.type === 'invoice' && notification.reference_id) {
-      navigate(`/invoices?invoiceId=${notification.reference_id}`);
-    } else if (notification.type === 'dispatch' && notification.reference_id) {
-      navigate(`/dispatches?dispatchId=${notification.reference_id}`);
-    } else if (notification.type === 'payment' && notification.reference_id) {
-      navigate(`/payments?paymentId=${notification.reference_id}`);
+    console.log('🔍 type:', type, 'refId:', refId);
+
+    if (refId) {
+      switch (type) {
+        case 'order':
+          navigate(`/orders?orderId=${refId}`);
+          break;
+        case 'invoice':
+          navigate(`/invoices?invoiceId=${refId}`);
+          break;
+        case 'dispatch':
+          navigate(`/dispatches?dispatchId=${refId}`);
+          break;
+        case 'payment':
+          navigate(`/payments?paymentId=${refId}`);
+          break;
+        case 'rejection':
+          navigate(`/rejections?rejectionId=${refId}`);
+          break;
+        case 'production':
+          navigate(`/production?productionId=${refId}`);
+          break;
+        default:
+          navigate(`/${type}s` || '/notifications');
+      }
     } else {
-      navigate(`/${notification.type}s` || '/');
+      if (type) {
+        navigate(`/${type}s`);
+      } else {
+        navigate('/notifications');
+      }
     }
   };
 
   const markAsRead = async (id: string) => {
-    await apiService.markNotificationRead(id);
-    await fetchNotifications();
-    window.dispatchEvent(new CustomEvent('notification-read'));
+    try {
+      setNotifications(prev =>
+        prev.map(n => n.id === id ? { ...n, is_read: true, isRead: true } : n)
+      );
+      await apiService.markNotificationRead(id);
+      await fetchNotifications();
+      window.dispatchEvent(new CustomEvent('notification-read'));
+    } catch (error) {
+      console.error('Error marking notification read:', error);
+      await fetchNotifications();
+    }
   };
 
   const markAllAsRead = async () => {
-    await apiService.markAllNotificationsRead();
-    await fetchNotifications();
-    window.dispatchEvent(new CustomEvent('notification-read'));
+    try {
+      setNotifications(prev =>
+        prev.map(n => ({ ...n, is_read: true, isRead: true }))
+      );
+      await apiService.markAllNotificationsRead();
+      await fetchNotifications();
+      window.dispatchEvent(new CustomEvent('notification-read'));
+    } catch (error) {
+      console.error('Error marking all notifications read:', error);
+      await fetchNotifications();
+    }
   };
 
   const deleteNotification = async (id: string) => {
-    await apiService.deleteNotification(id);
-    await fetchNotifications();
-    window.dispatchEvent(new CustomEvent('notification-read'));
+    try {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+      await apiService.deleteNotification(id);
+      window.dispatchEvent(new CustomEvent('notification-read'));
+    } catch (error) {
+      console.error('Error deleting notification:', error);
+      await fetchNotifications();
+    }
   };
 
   const getIcon = (type?: string) => {
@@ -73,6 +158,7 @@ export default function NotificationList() {
       case 'payment': return DollarSign;
       case 'rejection': return AlertTriangle;
       case 'invoice': return FileText;
+      case 'production': return Package;
       default: return Info;
     }
   };
@@ -84,11 +170,13 @@ export default function NotificationList() {
       case 'payment': return 'bg-amber-100 text-amber-600';
       case 'rejection': return 'bg-red-100 text-red-600';
       case 'invoice': return 'bg-purple-100 text-purple-600';
+      case 'production': return 'bg-indigo-100 text-indigo-600';
       default: return 'bg-slate-100 text-slate-600';
     }
   };
 
   const formatTime = (date: string) => {
+    if (!date) return 'N/A';
     const now = new Date();
     const notificationDate = new Date(date);
     const diffMs = now.getTime() - notificationDate.getTime();
@@ -110,7 +198,8 @@ export default function NotificationList() {
     );
   }
 
-  const unreadCount = notifications.filter(n => !n.is_read).length;
+  // ✅ Use the helper to check if a notification is read
+  const unreadCount = notifications.filter(n => !isNotificationRead(n)).length;
 
   return (
     <div className="space-y-6">
@@ -136,11 +225,12 @@ export default function NotificationList() {
           <div className="divide-y divide-slate-100">
             {notifications.map((notification) => {
               const Icon = getIcon(notification.type);
+              const isRead = isNotificationRead(notification);
               return (
                 <div
                   key={notification.id}
                   className={`p-4 hover:bg-slate-50 transition-colors cursor-pointer ${
-                    !notification.is_read ? 'bg-blue-50/50' : ''
+                    !isRead ? 'bg-blue-50/50' : ''
                   }`}
                   onClick={() => handleNotificationClick(notification)}
                 >
@@ -148,25 +238,27 @@ export default function NotificationList() {
                     <div className={`p-2 rounded-lg ${getIconColor(notification.type)}`}>
                       <Icon className="w-5 h-5" />
                     </div>
-                    <div className="flex-1">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <p className={`font-medium ${!notification.is_read ? 'text-slate-900' : 'text-slate-600'}`}>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <p className={`font-medium truncate ${!isRead ? 'text-slate-900' : 'text-slate-600'}`}>
                             {notification.title}
                           </p>
                           {notification.message && (
-                            <p className="text-sm text-slate-500 mt-1">{notification.message}</p>
+                            <p className="text-sm text-slate-500 mt-1 line-clamp-2">{notification.message}</p>
                           )}
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-slate-400">{formatTime(notification.created_at)}</span>
-                          {!notification.is_read && (
-                            <div className="w-2 h-2 bg-blue-500 rounded-full" />
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <span className="text-xs text-slate-400 whitespace-nowrap">
+                            {formatTime(notification.created_at || notification.createdAt)}
+                          </span>
+                          {!isRead && (
+                            <div className="w-2 h-2 bg-blue-500 rounded-full flex-shrink-0" />
                           )}
                         </div>
                       </div>
                       <div className="flex items-center gap-2 mt-2">
-                        {!notification.is_read && (
+                        {!isRead && (
                           <Button
                             variant="ghost"
                             size="sm"

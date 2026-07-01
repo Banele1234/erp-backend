@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider, useAuth } from './context/AuthContext';
+import AuthProvider, { useAuth } from './context/AuthContext';
 import Layout from './components/common/Layout';
 import Login from './components/auth/Login';
 import Register from './components/auth/Register';
@@ -21,89 +21,57 @@ import UserManagement from './components/users/UserManagement';
 import DispatchesPage from './components/dispatches/DispatchesPage';
 import NotFoundPage from './components/common/NotFoundPage';
 
-function PrivateRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuth();
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  return isAuthenticated ? <>{children}</> : <Navigate to="/login" />;
+function LoadingSpinner() {
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+      <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
 }
 
-function RoleRoute({
-  children,
-  allowedRoles,
-}: {
-  children: React.ReactNode;
-  allowedRoles: string[];
-}) {
-  const { isAuthenticated, isLoading, user } = useAuth();
+function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode; allowedRoles?: string[] }) {
+  // ✅ useAuth always returns an object (thanks to fallback in AuthContext)
+  const { user, isAuthenticated, isLoading } = useAuth();
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
+  if (isLoading) return <LoadingSpinner />;
+  if (!isAuthenticated) return <Navigate to="/login" />;
+  if (allowedRoles && !allowedRoles.includes(user?.role || '')) return <Navigate to="/" />;
 
-  if (!isAuthenticated || !user) {
-    return <Navigate to="/login" />;
-  }
-
-  return allowedRoles.includes(user.role) ? <>{children}</> : <Navigate to="/" />;
+  return <>{children}</>;
 }
 
-function PublicRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuth();
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  return !isAuthenticated ? <>{children}</> : <Navigate to="/" />;
-}
-
-function AppRoutes() {
+function AuthenticatedRoutes() {
   return (
     <Routes>
-      <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
-      <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
-      <Route path="/" element={<PrivateRoute><Layout><Dashboard /></Layout></PrivateRoute>} />
-      <Route path="/customers" element={<RoleRoute allowedRoles={['admin', 'management']}><Layout><CustomerList /></Layout></RoleRoute>} />
-      <Route path="/products" element={<RoleRoute allowedRoles={['admin', 'management', 'warehouse_staff']}><Layout><ProductList /></Layout></RoleRoute>} />
-      <Route path="/inventory" element={<RoleRoute allowedRoles={['admin', 'management', 'warehouse_staff']}><Layout><InventoryManagement /></Layout></RoleRoute>} />
-      <Route path="/warehouses" element={<RoleRoute allowedRoles={['admin', 'management']}><Layout><WarehouseManagement /></Layout></RoleRoute>} />
-      <Route path="/orders" element={<RoleRoute allowedRoles={['admin', 'management', 'warehouse_staff', 'production', 'customer']}><Layout><OrderManagement /></Layout></RoleRoute>} />
-      <Route path="/invoices" element={<RoleRoute allowedRoles={['admin', 'management', 'warehouse_staff', 'customer']}><Layout><InvoiceManagement /></Layout></RoleRoute>} />
-      <Route path="/payments" element={<RoleRoute allowedRoles={['admin', 'management', 'customer']}><Layout><PaymentManagement /></Layout></RoleRoute>} />
-      <Route path="/rejections" element={<RoleRoute allowedRoles={['admin', 'management', 'warehouse_staff', 'production']}><Layout><RejectionManagement /></Layout></RoleRoute>} />
-      <Route path="/production" element={<RoleRoute allowedRoles={['admin', 'management', 'production']}><Layout><ProductionTrackingManagement /></Layout></RoleRoute>} />
-      <Route path="/notifications" element={<RoleRoute allowedRoles={['admin', 'management', 'warehouse_staff', 'production', 'customer']}><Layout><NotificationList /></Layout></RoleRoute>} />
-      <Route path="/reports" element={<RoleRoute allowedRoles={['admin', 'management']}><Layout><Reports /></Layout></RoleRoute>} />
-      <Route path="/dispatches" element={<RoleRoute allowedRoles={['admin', 'management', 'warehouse_staff']}><Layout><DispatchesPage /></Layout></RoleRoute>} />
-      <Route path="/users" element={<RoleRoute allowedRoles={['admin']}><Layout><UserManagement /></Layout></RoleRoute>} />
-      <Route path="/settings" element={<PrivateRoute><Layout><SettingsPage /></Layout></PrivateRoute>} />
-      <Route path="/profile" element={<PrivateRoute><Layout><ProfilePage /></Layout></PrivateRoute>} />
+      <Route path="/login" element={<Login />} />
+      <Route path="/register" element={<Register />} />
+      <Route path="/" element={<ProtectedRoute><Layout><Dashboard /></Layout></ProtectedRoute>} />
+      <Route path="/customers" element={<ProtectedRoute allowedRoles={['admin', 'management']}><Layout><CustomerList /></Layout></ProtectedRoute>} />
+      <Route path="/products" element={<ProtectedRoute allowedRoles={['admin', 'management', 'warehouse_staff']}><Layout><ProductList /></Layout></ProtectedRoute>} />
+      <Route path="/inventory" element={<ProtectedRoute allowedRoles={['admin', 'management', 'warehouse_staff']}><Layout><InventoryManagement /></Layout></ProtectedRoute>} />
+      <Route path="/warehouses" element={<ProtectedRoute allowedRoles={['admin', 'management']}><Layout><WarehouseManagement /></Layout></ProtectedRoute>} />
+      <Route path="/orders" element={<ProtectedRoute allowedRoles={['admin', 'management', 'warehouse_staff', 'production', 'customer']}><Layout><OrderManagement /></Layout></ProtectedRoute>} />
+      <Route path="/invoices" element={<ProtectedRoute allowedRoles={['admin', 'management', 'warehouse_staff', 'customer']}><Layout><InvoiceManagement /></Layout></ProtectedRoute>} />
+      <Route path="/payments" element={<ProtectedRoute allowedRoles={['admin', 'management', 'customer']}><Layout><PaymentManagement /></Layout></ProtectedRoute>} />
+      <Route path="/rejections" element={<ProtectedRoute allowedRoles={['admin', 'management', 'warehouse_staff', 'production']}><Layout><RejectionManagement /></Layout></ProtectedRoute>} />
+      <Route path="/production" element={<ProtectedRoute allowedRoles={['admin', 'management', 'production']}><Layout><ProductionTrackingManagement /></Layout></ProtectedRoute>} />
+      <Route path="/notifications" element={<ProtectedRoute allowedRoles={['admin', 'management', 'warehouse_staff', 'production', 'customer']}><Layout><NotificationList /></Layout></ProtectedRoute>} />
+      <Route path="/reports" element={<ProtectedRoute allowedRoles={['admin', 'management']}><Layout><Reports /></Layout></ProtectedRoute>} />
+      <Route path="/dispatches" element={<ProtectedRoute allowedRoles={['admin', 'management', 'warehouse_staff']}><Layout><DispatchesPage /></Layout></ProtectedRoute>} />
+      <Route path="/users" element={<ProtectedRoute allowedRoles={['admin']}><Layout><UserManagement /></Layout></ProtectedRoute>} />
+      <Route path="/settings" element={<ProtectedRoute><Layout><SettingsPage /></Layout></ProtectedRoute>} />
+      <Route path="/profile" element={<ProtectedRoute><Layout><ProfilePage /></Layout></ProtectedRoute>} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
 }
 
 function App() {
+  // ✅ AuthProvider wraps the entire router – context available everywhere
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <AuthenticatedRoutes />
       </AuthProvider>
     </BrowserRouter>
   );

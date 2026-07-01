@@ -81,6 +81,17 @@ export default function Reports() {
         apiService.getProducts({ limit: 200 }),
       ]);
 
+      // ✅ Safely extract arrays
+      const ordersData = ordersRes.data?.data || ordersRes.data?.content || ordersRes.data || [];
+      const orders = Array.isArray(ordersData) ? ordersData : [];
+
+      const customersData = customersRes.data?.data || customersRes.data?.content || customersRes.data || [];
+      const customers = Array.isArray(customersData) ? customersData : [];
+
+      const productsData = productsRes.data?.data || productsRes.data?.content || productsRes.data || [];
+      const products = Array.isArray(productsData) ? productsData : [];
+
+      // Fetch top products separately (with safe extraction)
       let topProductsRes;
       try {
         topProductsRes = await apiService.request('/dashboard/top-products', { method: 'GET' });
@@ -88,10 +99,6 @@ export default function Reports() {
         console.warn('Top products fetch failed, using fallback:', err);
         topProductsRes = null;
       }
-
-      const orders = ordersRes.data || [];
-      const customers = customersRes.data || [];
-      const products = productsRes.data || [];
 
       const totalRevenue = orders.reduce((sum: number, o: any) => sum + (o.total_amount || 0), 0);
       const totalOrders = orders.length;

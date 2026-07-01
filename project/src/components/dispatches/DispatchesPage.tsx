@@ -40,13 +40,16 @@ export default function DispatchesPage() {
     setLoading(true);
     setError('');
     try {
-      // Fetch orders (with customer details already attached)
       const response = await apiService.getOrders({ limit: 200 });
-      const allOrders = response.data || [];
+      
+      // ✅ Safely extract array from different response shapes
+      const allOrders = response.data?.data || response.data?.content || response.data || [];
+      const ordersArray = Array.isArray(allOrders) ? allOrders : [];
 
-      // Filter orders that have dispatch-related statuses
       const dispatchStatuses = ['ready_for_dispatch', 'in_transit', 'delivered', 'cancelled'];
-      const dispatchOrders = allOrders.filter((o: Order) => dispatchStatuses.includes(o.status));
+      const dispatchOrders = ordersArray.filter((o: Order) => 
+        o && dispatchStatuses.includes(o.status)
+      );
 
       setOrders(dispatchOrders);
 
@@ -54,9 +57,7 @@ export default function DispatchesPage() {
       const ready = dispatchOrders.filter((o: Order) => o.status === 'ready_for_dispatch').length;
       const transit = dispatchOrders.filter((o: Order) => o.status === 'in_transit').length;
       const delivered = dispatchOrders.filter((o: Order) => o.status === 'delivered').length;
-      // For "delayed" we could compute if delivery is overdue, but we'll set to 0 for now
-      // (we could check required_date vs today, but we don't have it in the order object)
-      const delayed = 0;
+      const delayed = 0; // Could compute if needed
 
       setStats({ readyToDispatch: ready, inTransit: transit, delayed, delivered });
     } catch (err: any) {

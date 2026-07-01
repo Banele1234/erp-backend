@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { apiService } from '../../lib/api';
 import { Inventory, Warehouse, MovementType, Product } from '../../types';
 import { Card, Button, Badge, Modal, Input, Select, LoadingSpinner, EmptyState, Table, TableHeader, TableBody, TableRow, TableCell } from '../common/StatusBadge';
-import { Plus, Search, Package, Warehouse as WarehouseIcon, ArrowUp, ArrowDown, ArrowRight, AlertTriangle, X, RefreshCw } from 'lucide-react';
+import { Plus, Search, Package, Warehouse as WarehouseIcon, ArrowUp, ArrowDown, ArrowRight, AlertTriangle, X, RefreshCw, CheckCircle } from 'lucide-react';
 
 export default function InventoryManagement() {
   const [inventory, setInventory] = useState<Inventory[]>([]);
@@ -11,6 +11,7 @@ export default function InventoryManagement() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterWarehouse, setFilterWarehouse] = useState('');
   const [showAdjustModal, setShowAdjustModal] = useState(false);
+  const [paginationInfo, setPaginationInfo] = useState<any>(null);
 
   useEffect(() => {
     fetchData();
@@ -24,35 +25,127 @@ export default function InventoryManagement() {
         apiService.getWarehouses(),
       ]);
 
-      console.log('✅ Inventory received:', invRes.data?.length || 0, 'items');
-      console.log('✅ Warehouses received:', whRes.data?.length || 0, 'items');
-      console.log('📦 Warehouses data:', whRes.data);
+      console.log('📦 Raw inventory response:', invRes);
+      console.log('📦 Raw warehouses response:', whRes);
 
-      setInventory(invRes.data || []);
-      setWarehouses(whRes.data || []);
-
-      // If warehouses are empty, show a warning in console
-      if (!whRes.data || whRes.data.length === 0) {
-        console.warn('⚠️ No warehouses found. Check backend /api/v1/warehouses');
+      // ---- Exhaustive extraction for inventory ----
+      let invData = null;
+      const invRoot = invRes || {};
+      if (Array.isArray(invRoot)) {
+        invData = invRoot;
+      } else if (invRoot.data) {
+        if (Array.isArray(invRoot.data)) {
+          invData = invRoot.data;
+        } else if (typeof invRoot.data === 'object') {
+          const nested = invRoot.data;
+          console.log('🔍 Nested inventory object keys:', Object.keys(nested));
+          const possibleKeys = ['content', 'items', 'results', 'data', 'list', 'records', 'rows', 'inventory'];
+          for (const key of possibleKeys) {
+            if (Array.isArray(nested[key])) {
+              invData = nested[key];
+              console.log(`✅ Found inventory in response.data.${key} (length: ${invData.length})`);
+              break;
+            }
+          }
+          if (nested.totalElements !== undefined) {
+            setPaginationInfo(nested);
+          }
+          if (!invData && Array.isArray(nested)) {
+            invData = nested;
+          }
+        }
+      } else {
+        const topKeys = ['content', 'items', 'results', 'data', 'list', 'records', 'rows', 'inventory'];
+        for (const key of topKeys) {
+          if (Array.isArray(invRoot[key])) {
+            invData = invRoot[key];
+            console.log(`✅ Found inventory in response.${key} (length: ${invData.length})`);
+            break;
+          }
+        }
       }
+      // Fallback for response.data.content
+      if (!invData && invRes?.data?.content) {
+        invData = invRes.data.content;
+        console.log(`✅ Fallback: found inventory in response.data.content (length: ${invData.length})`);
+        if (invRes.data.totalElements !== undefined) {
+          setPaginationInfo(invRes.data);
+        }
+      }
+      if (!invData) {
+        console.warn('⚠️ No inventory array found – using empty array.');
+        invData = [];
+      }
+
+      // ---- Exhaustive extraction for warehouses ----
+      let whData = null;
+      const whRoot = whRes || {};
+      if (Array.isArray(whRoot)) {
+        whData = whRoot;
+      } else if (whRoot.data) {
+        if (Array.isArray(whRoot.data)) {
+          whData = whRoot.data;
+        } else if (typeof whRoot.data === 'object') {
+          const nested = whRoot.data;
+          const possibleKeys = ['content', 'items', 'results', 'data', 'list', 'records', 'rows'];
+          for (const key of possibleKeys) {
+            if (Array.isArray(nested[key])) {
+              whData = nested[key];
+              console.log(`✅ Found warehouses in response.data.${key} (length: ${whData.length})`);
+              break;
+            }
+          }
+          if (!whData && Array.isArray(nested)) {
+            whData = nested;
+          }
+        }
+      } else {
+        const topKeys = ['content', 'items', 'results', 'data', 'list', 'records', 'rows'];
+        for (const key of topKeys) {
+          if (Array.isArray(whRoot[key])) {
+            whData = whRoot[key];
+            console.log(`✅ Found warehouses in response.${key} (length: ${whData.length})`);
+            break;
+          }
+        }
+      }
+      if (!whData) {
+        whData = [];
+      }
+
+      console.log('✅ Final inventory data:', invData);
+      console.log('✅ Final warehouses data:', whData);
+
+      setInventory(Array.isArray(invData) ? invData : []);
+      setWarehouses(Array.isArray(whData) ? whData : []);
     } catch (error) {
       console.error('❌ Error fetching inventory:', error);
+      setInventory([]);
+      setWarehouses([]);
     }
     setIsLoading(false);
   };
 
+  // ---- Robust filtering ----
   const filteredInventory = inventory.filter((inv) => {
-    const matchesSearch =
-      inv.product?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      inv.product?.product_code?.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesWarehouse = !filterWarehouse || inv.warehouse_id === filterWarehouse;
+    if (!inv) return false;
+    const searchLower = searchQuery.toLowerCase().trim();
+    const productName = (inv.product?.name || '').toLowerCase();
+    const productCode = (inv.product?.product_code || '').toLowerCase();
+    const matchesSearch = productName.includes(searchLower) || productCode.includes(searchLower);
+
+    let matchesWarehouse = true;
+    if (filterWarehouse) {
+      const invWarehouseId = inv.warehouse_id ?? inv.warehouseId ?? inv.warehouse?.id;
+      matchesWarehouse = invWarehouseId === filterWarehouse;
+    }
     return matchesSearch && matchesWarehouse;
   });
 
   const formatCurrency = (amount: number) => {
     return `E ${new Intl.NumberFormat('en-US', {
       maximumFractionDigits: 0,
-    }).format(amount)}`;
+    }).format(amount || 0)}`;
   };
 
   const getStockStatus = (item: Inventory) => {
@@ -70,6 +163,7 @@ export default function InventoryManagement() {
     );
   }
 
+  const totalElements = paginationInfo?.totalElements ?? inventory.length;
   const lowStockCount = inventory.filter(i =>
     i.available_quantity < (i.product?.reorder_level || 100)
   ).length;
@@ -93,6 +187,17 @@ export default function InventoryManagement() {
           </Button>
         </div>
       </div>
+
+      {paginationInfo && (
+        <div className="text-sm text-slate-500 bg-slate-50 p-2 rounded">
+          Total inventory records: <strong>{totalElements}</strong>
+          {totalElements > 0 && inventory.length === 0 && (
+            <span className="text-amber-600 ml-2">
+              (But none loaded – check your search/filters)
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
@@ -153,19 +258,33 @@ export default function InventoryManagement() {
               className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
-          <Select
+          <select
             value={filterWarehouse}
             onChange={(e) => setFilterWarehouse(e.target.value)}
-            options={[
-              { value: '', label: 'All Warehouses' },
-              ...warehouses.map(w => ({ value: w.id, label: w.name }))
-            ]}
-            className="w-48"
-          />
+            className="w-48 rounded-lg border border-slate-300 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+          >
+            <option value="">All Warehouses</option>
+            {warehouses.map(w => (
+              <option key={w.id} value={w.id}>{w.name}</option>
+            ))}
+          </select>
+          <Button variant="outline" onClick={() => {
+            setSearchQuery('');
+            setFilterWarehouse('');
+            fetchData();
+          }} className="whitespace-nowrap">
+            Reset Filters
+          </Button>
         </div>
 
         {filteredInventory.length === 0 ? (
-          <EmptyState message="No inventory items found" />
+          <EmptyState
+            message={
+              totalElements > 0 && inventory.length === 0
+                ? "Your search or filter is too restrictive – try resetting filters."
+                : "No inventory items found."
+            }
+          />
         ) : (
           <Table>
             <TableHeader>
@@ -183,7 +302,8 @@ export default function InventoryManagement() {
             <TableBody>
               {filteredInventory.map((item) => {
                 const status = getStockStatus(item);
-                const value = (item.quantity || 0) * (item.product?.unit_price || 0);
+                const unitPrice = item.product?.unit_price ?? 0;
+                const value = (item.quantity || 0) * unitPrice;
                 return (
                   <TableRow key={item.id}>
                     <TableCell>
@@ -192,21 +312,21 @@ export default function InventoryManagement() {
                           <Package className="w-5 h-5 text-white" />
                         </div>
                         <div>
-                          <p className="font-medium text-slate-900">{item.product?.name}</p>
-                          <p className="text-sm text-slate-500">{item.product?.product_code}</p>
+                          <p className="font-medium text-slate-900">{item.product?.name || 'Unknown'}</p>
+                          <p className="text-sm text-slate-500">{item.product?.product_code || ''}</p>
                         </div>
                       </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <WarehouseIcon className="w-4 h-4 text-slate-400" />
-                        <span>{item.warehouse?.name}</span>
+                        <span>{item.warehouse?.name || 'Unknown'}</span>
                       </div>
                     </TableCell>
                     <TableCell className="font-medium">{item.quantity}</TableCell>
                     <TableCell className="text-amber-600">{item.reserved_quantity}</TableCell>
                     <TableCell className="font-semibold text-emerald-600">{item.available_quantity}</TableCell>
-                    <TableCell>{formatCurrency(item.product?.unit_price || 0)}</TableCell>
+                    <TableCell>{formatCurrency(unitPrice)}</TableCell>
                     <TableCell className="font-medium">{formatCurrency(value)}</TableCell>
                     <TableCell>
                       <Badge variant={status.color as any}>{status.label}</Badge>
@@ -232,7 +352,7 @@ export default function InventoryManagement() {
   );
 }
 
-// ========== Adjust Inventory Modal ==========
+// ========== Adjust Inventory Modal with improved error handling ==========
 function AdjustInventoryModal({
   isOpen,
   onClose,
@@ -250,8 +370,10 @@ function AdjustInventoryModal({
   const [quantity, setQuantity] = useState(1);
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
 
-  // Product search state
+  // Product search
   const [productSearch, setProductSearch] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -259,7 +381,7 @@ function AdjustInventoryModal({
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Fetch products when search changes (debounced)
+  // Fetch products on search
   useEffect(() => {
     if (!productSearch.trim()) {
       setProducts([]);
@@ -269,7 +391,11 @@ function AdjustInventoryModal({
       setIsProductLoading(true);
       try {
         const res = await apiService.getProducts({ search: productSearch, limit: 50 });
-        setProducts(res.data || []);
+        let data = res.data?.data || res.data?.content || res.data || [];
+        if (!Array.isArray(data)) {
+          data = [];
+        }
+        setProducts(data);
       } catch (error) {
         console.error('Error fetching products:', error);
         setProducts([]);
@@ -280,7 +406,6 @@ function AdjustInventoryModal({
     return () => clearTimeout(timer);
   }, [productSearch]);
 
-  // Close dropdown on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
@@ -295,46 +420,82 @@ function AdjustInventoryModal({
     setSelectedProduct(product);
     setProductSearch(product.name);
     setShowDropdown(false);
+    setErrorMessage('');
+    setSuccessMessage('');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage('');
+    setSuccessMessage('');
+
+    // Validation
     if (!selectedProduct) {
-      alert('Please select a product.');
+      setErrorMessage('Please select a product.');
       return;
     }
     if (!warehouseId) {
-      alert('Please select a warehouse.');
+      setErrorMessage('Please select a warehouse.');
       return;
     }
     if (movementType === 'transfer' && !toWarehouseId) {
-      alert('Please select destination warehouse.');
+      setErrorMessage('Please select destination warehouse.');
       return;
     }
     if (quantity <= 0) {
-      alert('Quantity must be greater than zero.');
+      setErrorMessage('Quantity must be greater than zero.');
       return;
     }
 
     setIsSubmitting(true);
+
     try {
-      await apiService.adjustInventory({
+      const payload: any = {
         product_id: selectedProduct.id,
         warehouse_id: warehouseId,
         movement_type: movementType,
         quantity: quantity,
-        to_warehouse_id: movementType === 'transfer' ? toWarehouseId : undefined,
         notes: notes,
-      });
-      onSuccess();
+      };
+      if (movementType === 'transfer') {
+        payload.to_warehouse_id = toWarehouseId;
+      }
+      console.log('📤 Adjusting inventory with payload:', payload);
+      await apiService.adjustInventory(payload);
+
+      setSuccessMessage('✅ Inventory adjusted successfully!');
+      setTimeout(() => {
+        onSuccess();
+        // Reset form
+        setMovementType('in');
+        setWarehouseId('');
+        setToWarehouseId('');
+        setQuantity(1);
+        setNotes('');
+        setProductSearch('');
+        setSelectedProduct(null);
+        setProducts([]);
+        setShowDropdown(false);
+        setSuccessMessage('');
+        setErrorMessage('');
+        onClose();
+      }, 1500);
     } catch (error: any) {
-      alert(error.message || 'Failed to adjust inventory. Please try again.');
+      let msg = 'Failed to adjust inventory. Please try again.';
+      if (error.status === 403) {
+        msg = 'You do not have permission to adjust inventory. Please contact your administrator.';
+      } else if (error.status === 404) {
+        msg = 'Product or warehouse not found. Please check your selection.';
+      } else if (error.message) {
+        msg = error.message;
+      }
+      setErrorMessage(msg);
+      console.error('Adjust inventory error:', error);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // Reset form when modal closes
   const handleClose = () => {
     setMovementType('in');
     setWarehouseId('');
@@ -345,12 +506,37 @@ function AdjustInventoryModal({
     setSelectedProduct(null);
     setProducts([]);
     setShowDropdown(false);
+    setSuccessMessage('');
+    setErrorMessage('');
     onClose();
+  };
+
+  const getUnitPrice = (product: any): number => {
+    return product.unit_price ?? product.unitPrice ?? product.price ?? 0;
+  };
+
+  const formatCurrency = (amount: number) => {
+    return `E ${new Intl.NumberFormat('en-US', {
+      maximumFractionDigits: 0,
+    }).format(amount || 0)}`;
   };
 
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title="Adjust Inventory" size="md">
       <form onSubmit={handleSubmit} className="space-y-4">
+        {errorMessage && (
+          <div className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700 border border-red-200">
+            <AlertTriangle className="w-4 h-4" />
+            {errorMessage}
+          </div>
+        )}
+        {successMessage && (
+          <div className="flex items-center gap-2 rounded-lg bg-green-50 p-3 text-sm text-green-700 border border-green-200">
+            <CheckCircle className="w-4 h-4" />
+            {successMessage}
+          </div>
+        )}
+
         <div className="flex gap-2 mb-4">
           {[
             { type: 'in', label: 'Stock In', icon: ArrowDown },
@@ -360,7 +546,11 @@ function AdjustInventoryModal({
             <button
               key={option.type}
               type="button"
-              onClick={() => setMovementType(option.type as MovementType)}
+              onClick={() => {
+                setMovementType(option.type as MovementType);
+                setErrorMessage('');
+                setSuccessMessage('');
+              }}
               className={`flex-1 py-3 rounded-lg border flex items-center justify-center gap-2 transition-all ${
                 movementType === option.type
                   ? 'border-blue-600 bg-blue-50 text-blue-700'
@@ -376,7 +566,14 @@ function AdjustInventoryModal({
         <Select
           label="Warehouse"
           value={warehouseId}
-          onChange={(e) => setWarehouseId(e.target.value)}
+          onChange={(e) => {
+            setWarehouseId(e.target.value);
+            if (movementType === 'transfer' && e.target.value === toWarehouseId) {
+              setToWarehouseId('');
+            }
+            setErrorMessage('');
+            setSuccessMessage('');
+          }}
           options={warehouses.map(w => ({ value: w.id, label: w.name }))}
           placeholder="Select source warehouse"
           required
@@ -386,7 +583,11 @@ function AdjustInventoryModal({
           <Select
             label="To Warehouse"
             value={toWarehouseId}
-            onChange={(e) => setToWarehouseId(e.target.value)}
+            onChange={(e) => {
+              setToWarehouseId(e.target.value);
+              setErrorMessage('');
+              setSuccessMessage('');
+            }}
             options={warehouses
               .filter(w => w.id !== warehouseId)
               .map(w => ({ value: w.id, label: w.name }))}
@@ -409,6 +610,8 @@ function AdjustInventoryModal({
                 if (e.target.value === '') {
                   setSelectedProduct(null);
                 }
+                setErrorMessage('');
+                setSuccessMessage('');
               }}
               onFocus={() => setShowDropdown(true)}
               placeholder="Search product by name or code..."
@@ -437,29 +640,32 @@ function AdjustInventoryModal({
                 </div>
               ) : products.length === 0 ? (
                 <div className="p-4 text-center text-slate-500">
-                  No products found. You can add a product from the Products page.
+                  No products found.
                 </div>
               ) : (
-                products.map((product) => (
-                  <button
-                    key={product.id}
-                    type="button"
-                    onClick={() => handleSelectProduct(product)}
-                    className="w-full px-4 py-2 text-left hover:bg-slate-50 transition-colors flex items-center gap-2 border-b border-slate-100 last:border-0"
-                  >
-                    <Package className="w-4 h-4 text-slate-400" />
-                    <div>
-                      <p className="font-medium text-slate-900">{product.name}</p>
-                      <p className="text-xs text-slate-500">{product.product_code}</p>
-                    </div>
-                  </button>
-                ))
+                products.map((product) => {
+                  const price = getUnitPrice(product);
+                  return (
+                    <button
+                      key={product.id}
+                      type="button"
+                      onClick={() => handleSelectProduct(product)}
+                      className="w-full px-4 py-2 text-left hover:bg-slate-50 transition-colors flex items-center gap-2 border-b border-slate-100 last:border-0"
+                    >
+                      <Package className="w-4 h-4 text-slate-400" />
+                      <div>
+                        <p className="font-medium text-slate-900">{product.name}</p>
+                        <p className="text-xs text-slate-500">{product.product_code} – {formatCurrency(price)}</p>
+                      </div>
+                    </button>
+                  );
+                })
               )}
             </div>
           )}
           {selectedProduct && (
             <p className="text-xs text-emerald-600 mt-1">
-              Selected: <strong>{selectedProduct.name}</strong>
+              Selected: <strong>{selectedProduct.name}</strong> – {formatCurrency(getUnitPrice(selectedProduct))}
             </p>
           )}
         </div>
@@ -468,7 +674,11 @@ function AdjustInventoryModal({
           label="Quantity"
           type="number"
           value={quantity}
-          onChange={(e) => setQuantity(Number(e.target.value))}
+          onChange={(e) => {
+            setQuantity(Number(e.target.value));
+            setErrorMessage('');
+            setSuccessMessage('');
+          }}
           min={1}
           required
         />
@@ -476,7 +686,11 @@ function AdjustInventoryModal({
         <Input
           label="Notes"
           value={notes}
-          onChange={(e) => setNotes(e.target.value)}
+          onChange={(e) => {
+            setNotes(e.target.value);
+            setErrorMessage('');
+            setSuccessMessage('');
+          }}
           placeholder="Optional notes"
         />
 
