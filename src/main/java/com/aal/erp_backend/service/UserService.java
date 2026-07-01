@@ -4,6 +4,8 @@ import com.aal.erp_backend.entity.User;
 import com.aal.erp_backend.repository.UserRepository;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+
 @Service
 public class UserService {
 
@@ -16,6 +18,11 @@ public class UserService {
     public User findByEmail(String email) {
         return userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("User not found with email: " + email));
+    }
+
+    // ✅ Added for UserController – returns all users
+    public List<User> getAllUsers() {
+        return userRepository.findAll();
     }
 
     // (Optional) add other methods if needed
