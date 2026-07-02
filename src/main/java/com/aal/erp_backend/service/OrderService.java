@@ -30,6 +30,7 @@ public class OrderService {
     private final NotificationRepository notificationRepository;
     private final WarehouseRepository warehouseRepository;
     private final InvoiceService invoiceService;
+    private final ProductionRepository productionRepository;
 
     public OrderService(OrderRepository orderRepository,
                         OrderItemRepository orderItemRepository,
@@ -38,7 +39,8 @@ public class OrderService {
                         UserRepository userRepository,
                         NotificationRepository notificationRepository,
                         WarehouseRepository warehouseRepository,
-                        InvoiceService invoiceService) {
+                        InvoiceService invoiceService,
+                        ProductionRepository productionRepository) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.productRepository = productRepository;
@@ -47,15 +49,25 @@ public class OrderService {
         this.notificationRepository = notificationRepository;
         this.warehouseRepository = warehouseRepository;
         this.invoiceService = invoiceService;
+        this.productionRepository = productionRepository;
     }
 
-    // ========== CONVERT TO DTO ==========
+    // ========== CONVERT TO DTO (SAFE – null checks) ==========
     private OrderResponseDTO convertToDTO(Order order) {
         try {
             System.out.println("🔍 Converting order: " + order.getId() + " - " + order.getOrderNumber());
 
-            Customer customer = customerRepository.findById(order.getCustomerId()).orElse(null);
-            Warehouse warehouse = warehouseRepository.findById(order.getWarehouseId()).orElse(null);
+            // ✅ Safe customer lookup – only if customerId is not null
+            Customer customer = null;
+            if (order.getCustomerId() != null) {
+                customer = customerRepository.findById(order.getCustomerId()).orElse(null);
+            }
+
+            // ✅ Safe warehouse lookup – only if warehouseId is not null
+            Warehouse warehouse = null;
+            if (order.getWarehouseId() != null) {
+                warehouse = warehouseRepository.findById(order.getWarehouseId()).orElse(null);
+            }
 
             CustomerSummaryDTO custDTO = null;
             if (customer != null) {
@@ -72,11 +84,18 @@ public class OrderService {
                 whDTO.setName(warehouse.getName());
             }
 
-            List<OrderItem> orderItems = orderItemRepository.findByOrderId(order.getId());
+            // ✅ Safe order items – only if order.getId() is not null
+            List<OrderItem> orderItems = new ArrayList<>();
+            if (order.getId() != null) {
+                orderItems = orderItemRepository.findByOrderId(order.getId());
+            }
             System.out.println("🔍 Found " + orderItems.size() + " order items");
 
             List<OrderItemDTO> itemDTOs = orderItems.stream().map(item -> {
-                Product product = productRepository.findById(item.getProductId()).orElse(null);
+                Product product = null;
+                if (item.getProductId() != null) {
+                    product = productRepository.findById(item.getProductId()).orElse(null);
+                }
                 ProductSummaryDTO productSummary = new ProductSummaryDTO();
                 if (product != null) {
                     productSummary.setId(product.getId() != null ? product.getId().toString() : null);
@@ -156,6 +175,7 @@ public class OrderService {
             }
             return new PageImpl<>(dtoList, pageable, orderPage.getTotalElements());
         } catch (Exception e) {
+            System.err.println("🔥 CRITICAL error in getOrders: " + e.getMessage());
             e.printStackTrace();
             return new PageImpl<>(new ArrayList<>(), PageRequest.of(0, 10), 0);
         }
@@ -248,7 +268,7 @@ public class OrderService {
         return convertToDTO(order);
     }
 
-    // ========== UPDATE ORDER STATUS (FIXED – now sends invoice notification) ==========
+    // ========== UPDATE ORDER STATUS ==========
     @Transactional
     public OrderResponseDTO updateOrderStatus(UUID orderId, String status) {
         System.out.println("🔵 updateOrderStatus called for order " + orderId + " to " + status);
@@ -263,13 +283,12 @@ public class OrderService {
         User user = userRepository.findById(customer.getUserId())
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
-        // 🔔 Generate invoice and send notification when status is in_production
+        // 🔔 Invoice and Production batch creation for "in_production"
         if ("in_production".equals(status)) {
+            // 1. Create invoice
             try {
                 Invoice invoice = invoiceService.createInvoiceFromOrder(order, user.getId());
                 System.out.println("✅ Invoice created: " + invoice.getInvoiceNumber());
-
-                // Send invoice notification to customer
                 createNotification(
                         user.getId(),
                         "Invoice Ready for Payment",
@@ -280,11 +299,42 @@ public class OrderService {
             } catch (Exception e) {
                 System.err.println("❌ Invoice creation failed: " + e.getMessage());
             }
+
+            // 2. Create production batches for each order item
+            try {
+                if (!productionRepository.existsByOrderId(orderId)) {
+                    List<OrderItem> orderItems = orderItemRepository.findByOrderId(orderId);
+                    String orderNumber = order.getOrderNumber();
+                    String factory = "Factory A"; // default – could be improved with warehouse mapping
+
+                    for (OrderItem item : orderItems) {
+                        Production production = new Production();
+                        production.setId(UUID.randomUUID());
+                        String productSuffix = item.getProductId().toString().substring(0, 6);
+                        production.setBatchNumber("BATCH-" + orderNumber + "-" + productSuffix);
+                        production.setProductId(item.getProductId());
+                        production.setOrderId(orderId);
+                        production.setPlannedQuantity(item.getQuantity() * 10); // adjust multiplier as needed
+                        production.setProducedQuantity(0);
+                        production.setRejectedQuantity(0);
+                        production.setStatus("planned");
+                        production.setFactory(factory);
+                        production.setStartDate(Instant.now());
+                        production.setCreatedAt(Instant.now());
+                        productionRepository.save(production);
+                        System.out.println("✅ Production batch created: " + production.getBatchNumber());
+                    }
+                } else {
+                    System.out.println("ℹ️ Production batches already exist for order " + order.getOrderNumber());
+                }
+            } catch (Exception e) {
+                System.err.println("❌ Failed to create production batches: " + e.getMessage());
+                e.printStackTrace();
+            }
         }
 
         // Notify when ready_for_dispatch
         if ("ready_for_dispatch".equals(status)) {
-            // Notify admins
             List<User> admins = userRepository.findByRoleIgnoreCase("admin");
             for (User admin : admins) {
                 createNotification(
@@ -295,7 +345,6 @@ public class OrderService {
                         order.getId().toString()
                 );
             }
-            // Notify customer to confirm/update shipping address
             createNotification(
                     user.getId(),
                     "Order Ready for Dispatch – Confirm Address",
@@ -303,7 +352,7 @@ public class OrderService {
                     "order",
                     order.getId().toString()
             );
-        } else {
+        } else if (!"in_production".equals(status)) {
             // Normal status update for other statuses
             String title = "Order " + status.replace("_", " ").toLowerCase();
             String message = "Order " + order.getOrderNumber() + " has been updated to " + status + ".";
@@ -324,7 +373,6 @@ public class OrderService {
         order.setUpdatedAt(Instant.now());
         orderRepository.save(order);
 
-        // Notify admins that address has been updated
         List<User> admins = userRepository.findByRoleIgnoreCase("admin");
         for (User admin : admins) {
             createNotification(
@@ -351,7 +399,6 @@ public class OrderService {
         order.setUpdatedAt(Instant.now());
         orderRepository.save(order);
 
-        // Notify customer that logistics details have been added
         Customer customer = customerRepository.findById(order.getCustomerId())
                 .orElseThrow(() -> new RuntimeException("Customer not found"));
         User user = userRepository.findById(customer.getUserId())
