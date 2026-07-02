@@ -3,10 +3,10 @@ package com.aal.erp_backend.controller;
 import com.aal.erp_backend.dto.ApiResponse;
 import com.aal.erp_backend.entity.Rejection;
 import com.aal.erp_backend.service.RejectionService;
+import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -20,50 +20,41 @@ public class RejectionController {
     }
 
     @GetMapping
-    public ResponseEntity<ApiResponse<List<Rejection>>> getRejections() {
-        List<Rejection> rejections = rejectionService.getAllRejections();
-        return ResponseEntity.ok(new ApiResponse<>(true, rejections));
-    }
-
-    @GetMapping("/{id}")
-    public ResponseEntity<ApiResponse<Rejection>> getRejection(@PathVariable UUID id) {
-        Rejection rejection = rejectionService.getRejectionById(id);
-        return ResponseEntity.ok(new ApiResponse<>(true, rejection));
+    public ResponseEntity<ApiResponse<Page<Rejection>>> getRejections(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int limit,
+            @RequestParam(required = false) String status) {
+        try {
+            Page<Rejection> rejections = rejectionService.getRejections(page, limit, status);
+            return ResponseEntity.ok(new ApiResponse<>(true, rejections));
+        } catch (Exception e) {
+            ApiResponse<Page<Rejection>> error = new ApiResponse<>(false, null);
+            error.setMessage(e.getMessage());
+            return ResponseEntity.status(500).body(error);
+        }
     }
 
     @PostMapping
-    public ResponseEntity<ApiResponse<Rejection>> createRejection(@RequestBody RejectionRequest request) {
-        Rejection created = rejectionService.createRejection(
-                request.getProductId(),
-                request.getWarehouseId(),
-                request.getQuantity(),
-                request.getReason(),
-                request.getCreatedBy()
-        );
-        return ResponseEntity.ok(new ApiResponse<>(true, created));
+    public ResponseEntity<ApiResponse<Rejection>> createRejection(@RequestBody Rejection rejection) {
+        try {
+            Rejection created = rejectionService.createRejection(rejection);
+            return ResponseEntity.ok(new ApiResponse<>(true, created));
+        } catch (Exception e) {
+            ApiResponse<Rejection> error = new ApiResponse<>(false, null);
+            error.setMessage(e.getMessage());
+            return ResponseEntity.status(500).body(error);
+        }
     }
 
-    @DeleteMapping("/{id}")
-    public ResponseEntity<ApiResponse<Void>> deleteRejection(@PathVariable UUID id) {
-        rejectionService.deleteRejection(id);
-        return ResponseEntity.ok(new ApiResponse<>(true, null));
+    @PatchMapping("/{id}")
+    public ResponseEntity<ApiResponse<Rejection>> updateRejection(@PathVariable UUID id, @RequestBody Rejection update) {
+        try {
+            Rejection updated = rejectionService.updateRejection(id, update);
+            return ResponseEntity.ok(new ApiResponse<>(true, updated));
+        } catch (Exception e) {
+            ApiResponse<Rejection> error = new ApiResponse<>(false, null);
+            error.setMessage(e.getMessage());
+            return ResponseEntity.status(500).body(error);
+        }
     }
-}
-
-class RejectionRequest {
-    private UUID productId;
-    private UUID warehouseId;
-    private Integer quantity;
-    private String reason;
-    private UUID createdBy;
-    public UUID getProductId() { return productId; }
-    public void setProductId(UUID productId) { this.productId = productId; }
-    public UUID getWarehouseId() { return warehouseId; }
-    public void setWarehouseId(UUID warehouseId) { this.warehouseId = warehouseId; }
-    public Integer getQuantity() { return quantity; }
-    public void setQuantity(Integer quantity) { this.quantity = quantity; }
-    public String getReason() { return reason; }
-    public void setReason(String reason) { this.reason = reason; }
-    public UUID getCreatedBy() { return createdBy; }
-    public void setCreatedBy(UUID createdBy) { this.createdBy = createdBy; }
 }
