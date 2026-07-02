@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.UUID;
 
 @Data
@@ -68,4 +69,17 @@ public class Order {
 
     @Column(name = "updated_at")
     private Instant updatedAt;
+
+    // ========== DISPATCH FIELDS (new) ==========
+    @Column(name = "dispatch_tracking")
+    private String dispatchTracking;
+
+    @Column(name = "dispatch_courier")
+    private String dispatchCourier;
+
+    @Column(name = "dispatch_estimated_delivery")
+    private LocalDate dispatchEstimatedDelivery;
+
+    @Column(name = "dispatch_notes")
+    private String dispatchNotes;
 }

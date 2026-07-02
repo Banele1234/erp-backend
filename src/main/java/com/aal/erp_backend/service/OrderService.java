@@ -1,5 +1,6 @@
 package com.aal.erp_backend.service;
 
+import com.aal.erp_backend.controller.OrderController;
 import com.aal.erp_backend.dto.*;
 import com.aal.erp_backend.entity.*;
 import com.aal.erp_backend.repository.*;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -47,7 +49,7 @@ public class OrderService {
         this.invoiceService = invoiceService;
     }
 
-    // ========== SAFE CONVERT TO DTO ==========
+    // ========== CONVERT TO DTO ==========
     private OrderResponseDTO convertToDTO(Order order) {
         try {
             System.out.println("🔍 Converting order: " + order.getId() + " - " + order.getOrderNumber());
@@ -256,7 +258,7 @@ public class OrderService {
         order.setUpdatedAt(Instant.now());
         order = orderRepository.save(order);
 
-        // ✅ FIX: Use case‑insensitive role lookup
+        // Notify admins
         List<User> admins = userRepository.findByRoleIgnoreCase("admin");
         for (User admin : admins) {
             createNotification(
@@ -271,7 +273,7 @@ public class OrderService {
         return convertToDTO(order);
     }
 
-    // ========== UPDATE ORDER STATUS (with invoice generation) ==========
+    // ========== UPDATE ORDER STATUS ==========
     @Transactional
     public OrderResponseDTO updateOrderStatus(UUID orderId, String status) {
         System.out.println("🔵 updateOrderStatus called for order " + orderId + " to " + status);
@@ -291,7 +293,6 @@ public class OrderService {
         if ("in_production".equals(status)) {
             System.out.println("📄 Attempting to generate invoice for order: " + order.getOrderNumber());
             try {
-                // ✅ Pass the user ID to create invoice and send notification
                 Invoice invoice = invoiceService.createInvoiceFromOrder(order, user.getId());
                 System.out.println("✅ Invoice created: " + invoice.getInvoiceNumber() + " with ID " + invoice.getId());
             } catch (Exception e) {
@@ -300,18 +301,56 @@ public class OrderService {
             }
         }
 
-        // Send order status notification to customer
-        String title = "Order " + status.replace("_", " ").toLowerCase();
-        String message = "Order " + order.getOrderNumber() + " has been updated to " + status + ".";
-        createNotification(
-                user.getId(),
-                title,
-                message,
-                "order",
-                order.getId().toString()
-        );
+        // Notify when ready_for_dispatch
+        if ("ready_for_dispatch".equals(status)) {
+            // Notify admins
+            List<User> admins = userRepository.findByRoleIgnoreCase("admin");
+            for (User admin : admins) {
+                createNotification(
+                        admin.getId(),
+                        "Order Ready for Dispatch",
+                        "Order " + order.getOrderNumber() + " is ready for dispatch. Please enter delivery details.",
+                        "order",
+                        order.getId().toString()
+                );
+            }
+            // Notify customer
+            createNotification(
+                    user.getId(),
+                    "Order Ready for Dispatch",
+                    "Your order " + order.getOrderNumber() + " is ready for dispatch. You will receive tracking info soon.",
+                    "order",
+                    order.getId().toString()
+            );
+        } else {
+            // Normal status update notification for other statuses
+            String title = "Order " + status.replace("_", " ").toLowerCase();
+            String message = "Order " + order.getOrderNumber() + " has been updated to " + status + ".";
+            createNotification(
+                    user.getId(),
+                    title,
+                    message,
+                    "order",
+                    order.getId().toString()
+            );
+        }
 
         return convertToDTO(updated);
+    }
+
+    // ========== UPDATE DISPATCH ==========
+    @Transactional
+    public OrderResponseDTO updateDispatch(UUID orderId, OrderController.DispatchRequest request) {
+        Order order = getOrderById(orderId);
+        order.setDispatchTracking(request.getTrackingNumber());
+        order.setDispatchCourier(request.getCourier());
+        if (request.getEstimatedDelivery() != null && !request.getEstimatedDelivery().isEmpty()) {
+            order.setDispatchEstimatedDelivery(LocalDate.parse(request.getEstimatedDelivery()));
+        }
+        order.setDispatchNotes(request.getNotes());
+        order.setUpdatedAt(Instant.now());
+        orderRepository.save(order);
+        return convertToDTO(order);
     }
 
     // ========== DELETE ORDER ==========
@@ -332,6 +371,7 @@ public class OrderService {
         return convertToDTO(orderRepository.save(order));
     }
 
+    // ---------- Helper methods ----------
     private Order getOrderById(UUID id) {
         return orderRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Order not found"));
@@ -348,5 +388,16 @@ public class OrderService {
         notification.setIsRead(false);
         notification.setCreatedAt(Instant.now());
         notificationRepository.save(notification);
+    }
+
+    // ---------- Inner DTO for items ----------
+    public static class OrderItemRequest {
+        private String productId;
+        private Integer quantity;
+
+        public String getProductId() { return productId; }
+        public void setProductId(String productId) { this.productId = productId; }
+        public Integer getQuantity() { return quantity; }
+        public void setQuantity(Integer quantity) { this.quantity = quantity; }
     }
 }
