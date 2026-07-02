@@ -38,6 +38,7 @@ public class Order {
     private String priority;
     private String notes;
 
+    // Shipping fields
     @Column(name = "shipping_address")
     private String shippingAddress;
 
@@ -49,6 +50,19 @@ public class Order {
 
     @Column(name = "shipping_pincode")
     private String shippingPincode;
+
+    // Dispatch fields (new)
+    @Column(name = "dispatch_tracking")
+    private String dispatchTracking;
+
+    @Column(name = "dispatch_courier")
+    private String dispatchCourier;
+
+    @Column(name = "dispatch_estimated_delivery")
+    private LocalDate dispatchEstimatedDelivery;
+
+    @Column(name = "dispatch_notes")
+    private String dispatchNotes;
 
     private Double subtotal;
 
@@ -69,17 +83,4 @@ public class Order {
 
     @Column(name = "updated_at")
     private Instant updatedAt;
-
-    // ========== DISPATCH FIELDS (new) ==========
-    @Column(name = "dispatch_tracking")
-    private String dispatchTracking;
-
-    @Column(name = "dispatch_courier")
-    private String dispatchCourier;
-
-    @Column(name = "dispatch_estimated_delivery")
-    private LocalDate dispatchEstimatedDelivery;
-
-    @Column(name = "dispatch_notes")
-    private String dispatchNotes;
 }

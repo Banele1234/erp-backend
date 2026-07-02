@@ -134,59 +134,28 @@ public class OrderService {
     @Transactional(readOnly = true)
     public Page<OrderResponseDTO> getOrders(int page, int size, String sort, UUID customerId) {
         try {
-            System.out.println("📦 GET /orders called with page=" + page + ", size=" + size + ", sort=" + sort + ", customerId=" + customerId);
-
             Sort sortObj;
-            try {
-                if (sort.contains(",")) {
-                    String[] parts = sort.split(",");
-                    sortObj = Sort.by(parts[0]).descending();
-                } else {
-                    sortObj = Sort.by(sort).ascending();
-                }
-            } catch (Exception e) {
-                System.err.println("⚠️ Invalid sort parameter: " + sort + ". Falling back to createdAt");
-                sortObj = Sort.by("createdAt").descending();
+            if (sort.contains(",")) {
+                String[] parts = sort.split(",");
+                sortObj = Sort.by(parts[0]).descending();
+            } else {
+                sortObj = Sort.by(sort).ascending();
             }
-
             Pageable pageable = PageRequest.of(page, size, sortObj);
-            System.out.println("📄 Pageable: " + pageable);
 
             Page<Order> orderPage;
-            try {
-                if (customerId == null) {
-                    orderPage = orderRepository.findAll(pageable);
-                } else {
-                    orderPage = orderRepository.findByCustomerId(customerId, pageable);
-                }
-                System.out.println("📄 Fetched " + orderPage.getTotalElements() + " total orders.");
-            } catch (Exception e) {
-                System.err.println("❌ Error fetching orders: " + e.getMessage());
-                e.printStackTrace();
-                return new PageImpl<>(new ArrayList<>(), pageable, 0);
+            if (customerId == null) {
+                orderPage = orderRepository.findAll(pageable);
+            } else {
+                orderPage = orderRepository.findByCustomerId(customerId, pageable);
             }
 
             List<OrderResponseDTO> dtoList = new ArrayList<>();
             for (Order order : orderPage.getContent()) {
-                try {
-                    dtoList.add(convertToDTO(order));
-                } catch (Exception e) {
-                    System.err.println("❌ Failed to convert order " + order.getId() + ": " + e.getMessage());
-                    e.printStackTrace();
-                    OrderResponseDTO fallback = new OrderResponseDTO();
-                    fallback.setId(order.getId());
-                    fallback.setOrderNumber(order.getOrderNumber() != null ? order.getOrderNumber() : "N/A");
-                    fallback.setStatus("error");
-                    fallback.setTotalAmount(0.0);
-                    fallback.setItems(List.of());
-                    dtoList.add(fallback);
-                }
+                dtoList.add(convertToDTO(order));
             }
-
             return new PageImpl<>(dtoList, pageable, orderPage.getTotalElements());
-
         } catch (Exception e) {
-            System.err.println("🔥 CRITICAL error in getOrders: " + e.getMessage());
             e.printStackTrace();
             return new PageImpl<>(new ArrayList<>(), PageRequest.of(0, 10), 0);
         }
@@ -203,7 +172,9 @@ public class OrderService {
     @Transactional
     public OrderResponseDTO createOrder(UUID customerId, UUID warehouseId,
                                         List<OrderItemRequest> items,
-                                        Instant requiredDate, String notes) {
+                                        Instant requiredDate, String notes,
+                                        String shippingAddress, String shippingCity,
+                                        String shippingState, String shippingPincode) {
         Customer customer = customerRepository.findById(customerId)
                 .orElseThrow(() -> new RuntimeException("Customer not found"));
 
@@ -217,6 +188,10 @@ public class OrderService {
         order.setPriority("normal");
         order.setStatus("pending");
         order.setNotes(notes);
+        order.setShippingAddress(shippingAddress);
+        order.setShippingCity(shippingCity);
+        order.setShippingState(shippingState);
+        order.setShippingPincode(shippingPincode);
         order.setCreatedAt(Instant.now());
         order.setSubtotal(0.0);
         order.setDiscountAmount(0.0);
@@ -273,7 +248,7 @@ public class OrderService {
         return convertToDTO(order);
     }
 
-    // ========== UPDATE ORDER STATUS ==========
+    // ========== UPDATE ORDER STATUS (FIXED – now sends invoice notification) ==========
     @Transactional
     public OrderResponseDTO updateOrderStatus(UUID orderId, String status) {
         System.out.println("🔵 updateOrderStatus called for order " + orderId + " to " + status);
@@ -283,21 +258,27 @@ public class OrderService {
         Order updated = orderRepository.save(order);
         System.out.println("✅ Order status updated to " + status);
 
-        // Fetch customer and user for notifications
         Customer customer = customerRepository.findById(order.getCustomerId())
                 .orElseThrow(() -> new RuntimeException("Customer not found"));
         User user = userRepository.findById(customer.getUserId())
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
-        // Generate invoice if status is in_production
+        // 🔔 Generate invoice and send notification when status is in_production
         if ("in_production".equals(status)) {
-            System.out.println("📄 Attempting to generate invoice for order: " + order.getOrderNumber());
             try {
                 Invoice invoice = invoiceService.createInvoiceFromOrder(order, user.getId());
-                System.out.println("✅ Invoice created: " + invoice.getInvoiceNumber() + " with ID " + invoice.getId());
+                System.out.println("✅ Invoice created: " + invoice.getInvoiceNumber());
+
+                // Send invoice notification to customer
+                createNotification(
+                        user.getId(),
+                        "Invoice Ready for Payment",
+                        "Invoice " + invoice.getInvoiceNumber() + " for order " + order.getOrderNumber() + " is ready. Please pay.",
+                        "invoice",
+                        invoice.getId().toString()
+                );
             } catch (Exception e) {
                 System.err.println("❌ Invoice creation failed: " + e.getMessage());
-                e.printStackTrace();
             }
         }
 
@@ -314,42 +295,74 @@ public class OrderService {
                         order.getId().toString()
                 );
             }
-            // Notify customer
+            // Notify customer to confirm/update shipping address
             createNotification(
                     user.getId(),
-                    "Order Ready for Dispatch",
-                    "Your order " + order.getOrderNumber() + " is ready for dispatch. You will receive tracking info soon.",
+                    "Order Ready for Dispatch – Confirm Address",
+                    "Order " + order.getOrderNumber() + " is ready for dispatch. Please confirm your shipping address.",
                     "order",
                     order.getId().toString()
             );
         } else {
-            // Normal status update notification for other statuses
+            // Normal status update for other statuses
             String title = "Order " + status.replace("_", " ").toLowerCase();
             String message = "Order " + order.getOrderNumber() + " has been updated to " + status + ".";
+            createNotification(user.getId(), title, message, "order", order.getId().toString());
+        }
+
+        return convertToDTO(updated);
+    }
+
+    // ========== UPDATE SHIPPING ADDRESS ==========
+    @Transactional
+    public OrderResponseDTO updateShipping(UUID orderId, OrderController.ShippingRequest request) {
+        Order order = getOrderById(orderId);
+        if (request.getShippingAddress() != null) order.setShippingAddress(request.getShippingAddress());
+        if (request.getShippingCity() != null) order.setShippingCity(request.getShippingCity());
+        if (request.getShippingState() != null) order.setShippingState(request.getShippingState());
+        if (request.getShippingPincode() != null) order.setShippingPincode(request.getShippingPincode());
+        order.setUpdatedAt(Instant.now());
+        orderRepository.save(order);
+
+        // Notify admins that address has been updated
+        List<User> admins = userRepository.findByRoleIgnoreCase("admin");
+        for (User admin : admins) {
             createNotification(
-                    user.getId(),
-                    title,
-                    message,
+                    admin.getId(),
+                    "Shipping Address Updated",
+                    "Customer has updated the shipping address for order " + order.getOrderNumber() + ".",
                     "order",
                     order.getId().toString()
             );
         }
-
-        return convertToDTO(updated);
+        return convertToDTO(order);
     }
 
     // ========== UPDATE DISPATCH ==========
     @Transactional
     public OrderResponseDTO updateDispatch(UUID orderId, OrderController.DispatchRequest request) {
         Order order = getOrderById(orderId);
-        order.setDispatchTracking(request.getTrackingNumber());
-        order.setDispatchCourier(request.getCourier());
+        if (request.getTrackingNumber() != null) order.setDispatchTracking(request.getTrackingNumber());
+        if (request.getCourier() != null) order.setDispatchCourier(request.getCourier());
         if (request.getEstimatedDelivery() != null && !request.getEstimatedDelivery().isEmpty()) {
             order.setDispatchEstimatedDelivery(LocalDate.parse(request.getEstimatedDelivery()));
         }
-        order.setDispatchNotes(request.getNotes());
+        if (request.getNotes() != null) order.setDispatchNotes(request.getNotes());
         order.setUpdatedAt(Instant.now());
         orderRepository.save(order);
+
+        // Notify customer that logistics details have been added
+        Customer customer = customerRepository.findById(order.getCustomerId())
+                .orElseThrow(() -> new RuntimeException("Customer not found"));
+        User user = userRepository.findById(customer.getUserId())
+                .orElseThrow(() -> new RuntimeException("User not found"));
+        createNotification(
+                user.getId(),
+                "Order Dispatched",
+                "Your order " + order.getOrderNumber() + " has been dispatched. Tracking: " + order.getDispatchTracking(),
+                "order",
+                order.getId().toString()
+        );
         return convertToDTO(order);
     }
 
@@ -371,7 +384,6 @@ public class OrderService {
         return convertToDTO(orderRepository.save(order));
     }
 
-    // ---------- Helper methods ----------
     private Order getOrderById(UUID id) {
         return orderRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Order not found"));

@@ -27,6 +27,19 @@ public class OrderCreateRequest {
     @JsonProperty("items")
     private List<OrderItemRequest> items;
 
+    // ===== NEW: Shipping fields =====
+    @JsonProperty("shippingAddress")
+    private String shippingAddress;
+
+    @JsonProperty("shippingCity")
+    private String shippingCity;
+
+    @JsonProperty("shippingState")
+    private String shippingState;
+
+    @JsonProperty("shippingPincode")
+    private String shippingPincode;
+
     // ----- Getters and Setters -----
     public String getCustomerId() {
         return customerId;
@@ -74,5 +87,38 @@ public class OrderCreateRequest {
 
     public void setItems(List<OrderItemRequest> items) {
         this.items = items;
+    }
+
+    // ----- NEW: Shipping getters and setters -----
+    public String getShippingAddress() {
+        return shippingAddress;
+    }
+
+    public void setShippingAddress(String shippingAddress) {
+        this.shippingAddress = shippingAddress;
+    }
+
+    public String getShippingCity() {
+        return shippingCity;
+    }
+
+    public void setShippingCity(String shippingCity) {
+        this.shippingCity = shippingCity;
+    }
+
+    public String getShippingState() {
+        return shippingState;
+    }
+
+    public void setShippingState(String shippingState) {
+        this.shippingState = shippingState;
+    }
+
+    public String getShippingPincode() {
+        return shippingPincode;
+    }
+
+    public void setShippingPincode(String shippingPincode) {
+        this.shippingPincode = shippingPincode;
     }
 }

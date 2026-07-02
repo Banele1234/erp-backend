@@ -38,7 +38,6 @@ public class OrderController {
 
     @PostMapping
     public OrderResponseDTO createOrder(@RequestBody OrderCreateRequest request) {
-        // ✅ Convert DTO items to service's OrderItemRequest type
         List<OrderService.OrderItemRequest> serviceItems = request.getItems().stream()
                 .map(dtoItem -> {
                     OrderService.OrderItemRequest serviceReq = new OrderService.OrderItemRequest();
@@ -53,7 +52,11 @@ public class OrderController {
                 UUID.fromString(request.getWarehouseId()),
                 serviceItems,
                 request.getRequiredDate().atStartOfDay().toInstant(ZoneOffset.UTC),
-                request.getNotes()
+                request.getNotes(),
+                request.getShippingAddress(),
+                request.getShippingCity(),
+                request.getShippingState(),
+                request.getShippingPincode()
         );
     }
 
@@ -62,6 +65,13 @@ public class OrderController {
         return orderService.updateOrderStatus(id, request.getStatus());
     }
 
+    // ===== Shipping update endpoint =====
+    @PatchMapping("/{id}/shipping")
+    public OrderResponseDTO updateShipping(@PathVariable UUID id, @RequestBody ShippingRequest request) {
+        return orderService.updateShipping(id, request);
+    }
+
+    // ===== Dispatch update endpoint =====
     @PatchMapping("/{id}/dispatch")
     public OrderResponseDTO updateDispatch(@PathVariable UUID id, @RequestBody DispatchRequest request) {
         return orderService.updateDispatch(id, request);
@@ -73,10 +83,27 @@ public class OrderController {
     }
 
     // ---------- Inner DTOs ----------
+    public static class ShippingRequest {
+        private String shippingAddress;
+        private String shippingCity;
+        private String shippingState;
+        private String shippingPincode;
+
+        // getters and setters
+        public String getShippingAddress() { return shippingAddress; }
+        public void setShippingAddress(String shippingAddress) { this.shippingAddress = shippingAddress; }
+        public String getShippingCity() { return shippingCity; }
+        public void setShippingCity(String shippingCity) { this.shippingCity = shippingCity; }
+        public String getShippingState() { return shippingState; }
+        public void setShippingState(String shippingState) { this.shippingState = shippingState; }
+        public String getShippingPincode() { return shippingPincode; }
+        public void setShippingPincode(String shippingPincode) { this.shippingPincode = shippingPincode; }
+    }
+
     public static class DispatchRequest {
         private String trackingNumber;
         private String courier;
-        private String estimatedDelivery; // yyyy-MM-dd
+        private String estimatedDelivery;
         private String notes;
 
         public String getTrackingNumber() { return trackingNumber; }
